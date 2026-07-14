@@ -5,6 +5,7 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
@@ -17,6 +18,10 @@ local DEFAULT_MAX_CAMERA_PITCH_DEGREES = 50
 local MIN_CAMERA_PITCH_ATTRIBUTE = "SpriteForgeMinCameraPitchDegrees"
 local MAX_CAMERA_PITCH_ATTRIBUTE = "SpriteForgeMaxCameraPitchDegrees"
 local lastCameraHorizontalDirection = Vector3.new(0, 0, 1)
+local swimAscendHeld = false
+local swimDescendHeld = false
+local SWIM_DESCEND_SPEED = 8
+local SWIM_DIRECTION_INPUT_EPSILON = 0.05
 
 local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local base64Lookup = table.create(256, -1)
@@ -73,6 +78,30 @@ type Controller = {
 
 local atlases: { [number]: Atlas } = {}
 local controllers: { [Player]: Controller } = {}
+
+local function updateSwimVerticalKey(input: InputObject, held: boolean)
+    if input.KeyCode == Enum.KeyCode.Space then
+        swimAscendHeld = held
+    elseif input.KeyCode == Enum.KeyCode.LeftControl
+        or input.KeyCode == Enum.KeyCode.RightControl
+    then
+        swimDescendHeld = held
+    end
+end
+
+UserInputService.InputBegan:Connect(function(input)
+    if UserInputService:GetFocusedTextBox() then
+        return
+    end
+    updateSwimVerticalKey(input, true)
+end)
+UserInputService.InputEnded:Connect(function(input)
+    updateSwimVerticalKey(input, false)
+end)
+UserInputService.WindowFocusReleased:Connect(function()
+    swimAscendHeld = false
+    swimDescendHeld = false
+end)
 
 local function decodeBase64(encoded: string): (buffer, number)
     encoded = string.gsub(encoded, "%s", "")
@@ -573,15 +602,19 @@ local function watchPlayer(player: Player)
     end
 end
 
-local function getViewDirection(root: BasePart, fallback: string): string
+local function getViewDirectionFromForward(
+    position: Vector3,
+    worldForward: Vector3,
+    fallback: string
+): string
     local camera = Workspace.CurrentCamera
     if not camera then
         return fallback
     end
-    local cameraOffset = camera.CFrame.Position - root.Position
+    local cameraOffset = camera.CFrame.Position - position
     local flatCameraOffset = Vector3.new(cameraOffset.X, 0, cameraOffset.Z)
-    local rootRight = Vector3.new(root.CFrame.RightVector.X, 0, root.CFrame.RightVector.Z)
-    local rootForward = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+    local rootForward = Vector3.new(worldForward.X, 0, worldForward.Z)
+    local rootRight = Vector3.new(-rootForward.Z, 0, rootForward.X)
     if flatCameraOffset.Magnitude < 0.05
         or rootRight.Magnitude < 0.001
         or rootForward.Magnitude < 0.001
@@ -610,10 +643,38 @@ local function getViewDirection(root: BasePart, fallback: string): string
     return bestDirection
 end
 
+local function getViewDirection(root: BasePart, fallback: string): string
+    return getViewDirectionFromForward(root.Position, root.CFrame.LookVector, fallback)
+end
+
+local function getSwimViewDirection(controller: Controller, fallback: string): string
+    local moveDirection = controller.humanoid.MoveDirection
+    local horizontalIntent = Vector3.new(moveDirection.X, 0, moveDirection.Z)
+    if horizontalIntent.Magnitude < SWIM_DIRECTION_INPUT_EPSILON then
+        return fallback
+    end
+    -- El rig R15 puede girar su HumanoidRootPart casi 180 grados durante el
+    -- nado y la velocidad se desvía al rozar el fondo o el borde de la piscina.
+    -- MoveDirection conserva la dirección que el jugador está ordenando, así
+    -- que evita inversiones y saltos entre horizontal y diagonal.
+    return getViewDirectionFromForward(controller.root.Position, horizontalIntent, fallback)
+end
+
 local function updateSwimPitchBand(controller: Controller, metadata: any): string
     local velocity = controller.root.AssemblyLinearVelocity
     local horizontalSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
     local speed = velocity.Magnitude
+    if controller.player == localPlayer then
+        if swimDescendHeld then
+            controller.swimMoving = true
+            controller.swimPitchBand = "down"
+            return controller.swimPitchBand
+        elseif swimAscendHeld then
+            controller.swimMoving = true
+            controller.swimPitchBand = "up"
+            return controller.swimPitchBand
+        end
+    end
     local enterSpeed = tonumber(metadata.SwimEnterSpeedThreshold) or 1.25
     local exitSpeed = tonumber(metadata.SwimExitSpeedThreshold) or 0.7
     if controller.swimMoving then
@@ -643,6 +704,20 @@ local function updateSwimPitchBand(controller: Controller, metadata: any): strin
         end
     end
     return controller.swimPitchBand
+end
+
+local function applyLocalSwimVerticalInput(controller: Controller)
+    if controller.player ~= localPlayer or not swimDescendHeld then
+        return
+    end
+    local velocity = controller.root.AssemblyLinearVelocity
+    if velocity.Y > -SWIM_DESCEND_SPEED then
+        controller.root.AssemblyLinearVelocity = Vector3.new(
+            velocity.X,
+            -SWIM_DESCEND_SPEED,
+            velocity.Z
+        )
+    end
 end
 
 local function discardAtlas(userId: number)
@@ -795,9 +870,10 @@ RunService:BindToRenderStep("SpriteForgePixelAvatarRender", Enum.RenderPriority.
             and metadata.ClipRows.swim_up ~= nil
             and metadata.ClipRows.swim_down ~= nil
             and humanoidState == Enum.HumanoidStateType.Swimming
-        local swimPitchBand = if swimming
-            then updateSwimPitchBand(controller, metadata)
-            else "level"
+        if swimming then
+            applyLocalSwimVerticalInput(controller)
+        end
+        local swimPitchBand = if swimming then updateSwimPitchBand(controller, metadata) else "level"
         if not swimming then
             controller.swimPitchBand = "level"
             controller.swimMoving = false
@@ -860,8 +936,8 @@ RunService:BindToRenderStep("SpriteForgePixelAvatarRender", Enum.RenderPriority.
             controller.idleAltActive = false
             controller.nextIdleAltAt = 6 + math.random() * 8
         end
-        local direction = if swimming and horizontalVelocity < 0.15
-            then controller.lastDirection
+        local direction = if swimming
+            then getSwimViewDirection(controller, controller.lastDirection)
             else getViewDirection(controller.root, controller.lastDirection)
         local debugDirection = controller.player:GetAttribute("SpriteForgeDebugDirection")
         local debugClip = controller.player:GetAttribute("SpriteForgeDebugClip")
