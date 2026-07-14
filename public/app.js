@@ -10,7 +10,10 @@ const DIRECTIONS = [
   { key: "right", label: "Derecha", dx: 1, dy: 0 },
   { key: "down_right", label: "Frente · derecha", dx: 1, dy: 1 },
 ];
-const CLIPS = ["idle", "walk", "run", "jump", "fall", "climb", "idle_alt"];
+const CLIPS = [
+  "idle", "walk", "run", "jump", "fall", "climb", "idle_alt",
+  "swim_idle", "swim", "swim_up", "swim_down",
+];
 const DEFAULT_IDLE_FRAMES = 16;
 let frameNames = [];
 
@@ -55,6 +58,7 @@ const elements = {
   liveStage: document.querySelector("#liveStage"),
   liveSprite: document.querySelector("#liveSprite"),
   pixelLadder: document.querySelector("#pixelLadder"),
+  pixelPool: document.querySelector("#pixelPool"),
   directionLabel: document.querySelector("#directionLabel"),
   clipLabel: document.querySelector("#clipLabel"),
   frameLabel: document.querySelector("#frameLabel"),
@@ -62,6 +66,7 @@ const elements = {
   resetPlayer: document.querySelector("#resetPlayer"),
   runToggle: document.querySelector("#runToggle"),
   climbToggle: document.querySelector("#climbToggle"),
+  swimToggle: document.querySelector("#swimToggle"),
   captureReuseLabel: document.querySelector("#captureReuseLabel"),
   recaptureInputs: [...document.querySelectorAll("[data-recapture-clip]")],
   previewSpeed: document.querySelector("#previewSpeed"),
@@ -97,6 +102,7 @@ const state = {
     verticalVelocity: 0,
     airOffset: 0,
     climbing: false,
+    swimming: false,
     idleWait: 0,
     idleAltActive: false,
     nextIdleAltAt: 6,
@@ -176,6 +182,7 @@ function bindEvents() {
     updateRunToggle();
   });
   elements.climbToggle.addEventListener("click", togglePreviewClimb);
+  elements.swimToggle.addEventListener("click", togglePreviewSwim);
   elements.previewSpeed.addEventListener("input", () => {
     elements.speedValue.value = elements.previewSpeed.value;
     elements.speedValue.textContent = elements.previewSpeed.value;
@@ -473,11 +480,13 @@ function initializeLivePreview(job, cacheKey) {
   state.preview.verticalVelocity = 0;
   state.preview.airOffset = 0;
   state.preview.climbing = false;
+  state.preview.swimming = false;
   state.preview.idleWait = 0;
   state.preview.idleAltActive = false;
   state.preview.nextIdleAltAt = nextIdleAlternateDelay();
   updateRunToggle();
   updateClimbToggle();
+  updateSwimToggle();
   elements.playToggle.textContent = "Pausar";
   const displaySize = Math.max(112, Math.min(192, job.result.frameSize * 2.5));
   elements.liveSprite.style.width = `${displaySize}px`;
@@ -511,10 +520,19 @@ function handleStageKeyDown(event) {
   }
   if (event.code === "Space" || event.key === " ") {
     event.preventDefault();
+    if (state.preview.swimming) {
+      state.preview.keys.add("ascend");
+      return;
+    }
     if (!event.repeat) {
       if (state.preview.climbing) leavePreviewClimb();
       startPreviewJump();
     }
+    return;
+  }
+  if (event.key === "Control" && state.preview.swimming) {
+    event.preventDefault();
+    state.preview.keys.add("descend");
     return;
   }
   if (event.key === "Shift") {
@@ -530,6 +548,14 @@ function handleStageKeyDown(event) {
 }
 
 function handleStageKeyUp(event) {
+  if (event.code === "Space" || event.key === " ") {
+    state.preview.keys.delete("ascend");
+    return;
+  }
+  if (event.key === "Control") {
+    state.preview.keys.delete("descend");
+    return;
+  }
   if (event.key === "Shift") {
     event.preventDefault();
     state.preview.shiftHeld = false;
@@ -554,17 +580,22 @@ function updatePreview(timestamp) {
   if (preview.active && !elements.resultView.classList.contains("hidden")) {
     const vector = getMovementVector();
     const climbing = preview.climbing && preview.availableClips.has("climb");
+    const swimming = preview.swimming && hasCompleteSwimPreview();
     const climbingMoving = climbing && vector.dy !== 0;
-    const moving = climbing ? climbingMoving : vector.dx !== 0 || vector.dy !== 0;
-    const running = moving && (preview.runLocked || preview.shiftHeld);
-    let nextClip = climbing
+    const swimPitch = preview.keys.has("ascend") ? "up" : preview.keys.has("descend") ? "down" : "level";
+    const swimmingMoving = swimming && (vector.dx !== 0 || vector.dy !== 0 || swimPitch !== "level");
+    const moving = climbing ? climbingMoving : swimming ? swimmingMoving : vector.dx !== 0 || vector.dy !== 0;
+    const running = !swimming && moving && (preview.runLocked || preview.shiftHeld);
+    let nextClip = swimming
+      ? (swimmingMoving ? (swimPitch === "up" ? "swim_up" : swimPitch === "down" ? "swim_down" : "swim") : "swim_idle")
+      : climbing
       ? "climb"
       : preview.airborne
       ? (preview.verticalVelocity < 0 ? "jump" : "fall")
       : moving
         ? (running ? "run" : "walk")
         : "idle";
-    if (nextClip === "idle" && preview.availableClips.has("idle_alt")) {
+    if (!swimming && nextClip === "idle" && preview.availableClips.has("idle_alt")) {
       preview.idleWait += delta;
       if (!preview.idleAltActive && preview.idleWait >= preview.nextIdleAltAt) {
         preview.idleAltActive = true;
@@ -580,7 +611,15 @@ function updatePreview(timestamp) {
       preview.animationTime = 0;
       preview.frameIndex = 1;
     }
-    if (climbing) {
+    if (swimming) {
+      if (vector.dx !== 0 || vector.dy !== 0) {
+        const length = Math.hypot(vector.dx, vector.dy) || 1;
+        preview.x += (vector.dx / length) * 96 * delta;
+        preview.y += (vector.dy / length) * 96 * delta;
+        setPreviewDirection(directionFromVector(vector.dx, vector.dy), false);
+      }
+      constrainPlayer();
+    } else if (climbing) {
       const ladder = getPreviewLadderBounds();
       preview.x = ladder.x;
       preview.y = Math.max(ladder.top, Math.min(ladder.bottom, preview.y + vector.dy * 86 * delta));
@@ -608,7 +647,7 @@ function updatePreview(timestamp) {
       preview.animationTime += delta;
       const baseFps = Number(elements.previewSpeed.value);
       const currentFrameCount = preview.frameCounts?.[preview.clip] ?? preview.framesPerAnimation;
-      const fps = preview.clip === "idle" || preview.clip === "idle_alt"
+      const fps = preview.clip === "idle" || preview.clip === "idle_alt" || preview.clip === "swim_idle"
         ? (baseFps / 8) * (currentFrameCount / 4)
         : preview.clip === "run"
           ? baseFps * 1.4
@@ -637,7 +676,7 @@ function updatePreview(timestamp) {
 
 function startPreviewJump() {
   const preview = state.preview;
-  if (!preview.active || preview.airborne) return;
+  if (!preview.active || preview.airborne || preview.swimming) return;
   preview.airborne = true;
   preview.verticalVelocity = -330;
   preview.airOffset = 0;
@@ -655,6 +694,7 @@ function togglePreviewClimb() {
   }
   const ladder = getPreviewLadderBounds();
   preview.climbing = true;
+  preview.swimming = false;
   preview.airborne = false;
   preview.airOffset = 0;
   preview.verticalVelocity = 0;
@@ -667,7 +707,52 @@ function togglePreviewClimb() {
   setPreviewDirection("up");
   updateRunToggle();
   updateClimbToggle();
+  updateSwimToggle();
   elements.liveStage.focus({ preventScroll: true });
+}
+
+function togglePreviewSwim() {
+  const preview = state.preview;
+  if (!preview.active || !hasCompleteSwimPreview()) return;
+  preview.swimming = !preview.swimming;
+  preview.climbing = false;
+  preview.airborne = false;
+  preview.airOffset = 0;
+  preview.verticalVelocity = 0;
+  preview.runLocked = false;
+  preview.keys.delete("ascend");
+  preview.keys.delete("descend");
+  if (preview.swimming) {
+    const pool = getPreviewPoolBounds();
+    preview.x = (pool.left + pool.right) / 2;
+    preview.y = (pool.top + pool.bottom) / 2;
+    preview.clip = "swim_idle";
+  } else {
+    const stage = elements.liveStage.getBoundingClientRect();
+    preview.x = stage.width / 2;
+    preview.y = stage.height * 0.57;
+    preview.clip = "idle";
+  }
+  preview.frameIndex = 1;
+  preview.animationTime = 0;
+  updateRunToggle();
+  updateClimbToggle();
+  updateSwimToggle();
+  constrainPlayer();
+  setSpriteFrame(true);
+  elements.liveStage.focus({ preventScroll: true });
+}
+
+function getPreviewPoolBounds() {
+  const stage = elements.liveStage.getBoundingClientRect();
+  const pool = elements.pixelPool.getBoundingClientRect();
+  const spriteSize = elements.liveSprite.getBoundingClientRect().width || 140;
+  return {
+    left: pool.left - stage.left + spriteSize * 0.32,
+    right: pool.right - stage.left - spriteSize * 0.32,
+    top: pool.top - stage.top + spriteSize * 0.3,
+    bottom: pool.bottom - stage.top - spriteSize * 0.3,
+  };
 }
 
 function leavePreviewClimb() {
@@ -755,6 +840,21 @@ function updateClimbToggle() {
     : "Climb pendiente";
 }
 
+function hasCompleteSwimPreview() {
+  return ["swim_idle", "swim", "swim_up", "swim_down"]
+    .every((clip) => state.preview.availableClips.has(clip));
+}
+
+function updateSwimToggle() {
+  const available = hasCompleteSwimPreview();
+  elements.swimToggle.disabled = !available;
+  elements.swimToggle.classList.toggle("active", state.preview.swimming);
+  elements.swimToggle.setAttribute("aria-pressed", String(state.preview.swimming));
+  elements.swimToggle.textContent = available
+    ? (state.preview.swimming ? "Nadando" : "Nadar")
+    : "Nado pendiente";
+}
+
 function resetPlayerPosition() {
   const rect = elements.liveStage.getBoundingClientRect();
   state.preview.x = rect.width / 2;
@@ -769,11 +869,13 @@ function resetPlayerPosition() {
   state.preview.verticalVelocity = 0;
   state.preview.airOffset = 0;
   state.preview.climbing = false;
+  state.preview.swimming = false;
   state.preview.idleWait = 0;
   state.preview.idleAltActive = false;
   state.preview.nextIdleAltAt = nextIdleAlternateDelay();
   updateRunToggle();
   updateClimbToggle();
+  updateSwimToggle();
   setPreviewDirection("down");
   constrainPlayer();
 }
@@ -784,6 +886,12 @@ function constrainPlayer() {
     const ladder = getPreviewLadderBounds();
     state.preview.x = ladder.x;
     state.preview.y = Math.max(ladder.top, Math.min(ladder.bottom, state.preview.y));
+    return;
+  }
+  if (state.preview.swimming) {
+    const pool = getPreviewPoolBounds();
+    state.preview.x = Math.max(pool.left, Math.min(pool.right, state.preview.x));
+    state.preview.y = Math.max(pool.top, Math.min(pool.bottom, state.preview.y));
     return;
   }
   const rect = elements.liveStage.getBoundingClientRect();
@@ -911,7 +1019,9 @@ function selectedIdleFrameCount() {
 function buildClipFrameCounts(framesPerAnimation, idleFramesPerAnimation = framesPerAnimation) {
   return Object.fromEntries(CLIPS.map((clip) => [
     clip,
-    clip === "idle" || clip === "idle_alt" ? idleFramesPerAnimation : framesPerAnimation,
+    clip === "idle" || clip === "idle_alt" || clip === "swim_idle"
+      ? idleFramesPerAnimation
+      : framesPerAnimation,
   ]));
 }
 

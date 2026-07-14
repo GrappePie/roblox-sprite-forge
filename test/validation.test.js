@@ -60,13 +60,13 @@ test("acepta una base de captura y una selección de clips sin duplicados", () =
   const payload = readGenerationPayload({
     source: "YukiManju",
     reuseCaptureJobId: "123e4567-e89b-42d3-a456-426614174000",
-    recaptureClips: ["climb", "walk", "climb"],
+    recaptureClips: ["climb", "swim", "walk", "climb"],
   }, config);
   assert.equal(payload.reuseCaptureJobId, "123e4567-e89b-42d3-a456-426614174000");
-  assert.deepEqual(payload.recaptureClips, ["climb", "walk"]);
+  assert.deepEqual(payload.recaptureClips, ["climb", "swim", "walk"]);
   assert.throws(() => readGenerationPayload({
     source: "YukiManju",
-    recaptureClips: ["swim"],
+    recaptureClips: ["dance"],
   }, config), /capturar/i);
 });
 

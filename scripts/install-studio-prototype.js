@@ -213,6 +213,99 @@ return HttpService:JSONEncode({
 })`,
 }));
 
+const pool = parseToolPayload(await client.callTool("execute_luau", {
+  code: `
+local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
+local Terrain = Workspace.Terrain
+local existing = Workspace:FindFirstChild("SpriteForgePixelPool")
+if existing then
+    local oldCenter = existing:GetAttribute("WaterCenter")
+    local oldSize = existing:GetAttribute("WaterSize")
+    if typeof(oldCenter) == "Vector3" and typeof(oldSize) == "Vector3" then
+        Terrain:FillBlock(CFrame.new(oldCenter), oldSize, Enum.Material.Air)
+    end
+    existing:Destroy()
+end
+
+local spawn = Workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+local groundY = spawn and (spawn.Position.Y + spawn.Size.Y / 2) or 0
+local origin = spawn
+    and Vector3.new(spawn.Position.X - 18, groundY + 3.2, spawn.Position.Z)
+    or Vector3.new(-18, groundY + 3.2, 0)
+local waterSize = Vector3.new(16, 6, 14)
+local model = Instance.new("Model")
+model.Name = "SpriteForgePixelPool"
+model:SetAttribute("SpriteForgeSwimTest", true)
+model:SetAttribute("WaterCenter", origin)
+model:SetAttribute("WaterSize", waterSize)
+model.Parent = Workspace
+
+local function makePart(name, size, position, color)
+    local part = Instance.new("Part")
+    part.Name = name
+    part.Size = size
+    part.CFrame = CFrame.new(position)
+    part.Anchored = true
+    part.CanCollide = true
+    part.CanTouch = true
+    part.CanQuery = true
+    part.CastShadow = false
+    part.Material = Enum.Material.SmoothPlastic
+    part.Color = color
+    part.TopSurface = Enum.SurfaceType.Smooth
+    part.BottomSurface = Enum.SurfaceType.Smooth
+    part.Parent = model
+    return part
+end
+
+local dark = Color3.fromRGB(28, 49, 59)
+local tile = Color3.fromRGB(118, 173, 188)
+local accent = Color3.fromRGB(126, 229, 255)
+makePart("Floor", Vector3.new(18, 0.8, 16), origin + Vector3.new(0, -3.4, 0), dark)
+makePart("NorthWall", Vector3.new(18, 7.2, 0.8), origin + Vector3.new(0, 0, -7.4), tile)
+makePart("SouthWall", Vector3.new(18, 7.2, 0.8), origin + Vector3.new(0, 0, 7.4), tile)
+makePart("WestWall", Vector3.new(0.8, 7.2, 14), origin + Vector3.new(-8.4, 0, 0), tile)
+makePart("EastWall", Vector3.new(0.8, 7.2, 14), origin + Vector3.new(8.4, 0, 0), tile)
+for step = 0, 3 do
+    makePart(
+        string.format("EntryStep%02d", step + 1),
+        Vector3.new(3.5, 0.6, 1.4),
+        origin + Vector3.new(0, 3.1 - step * 0.75, 7.7 - step * 1.1),
+        if step % 2 == 0 then accent else tile
+    )
+end
+Terrain:FillBlock(CFrame.new(origin), waterSize, Enum.Material.Water)
+
+local signAnchor = makePart("SignAnchor", Vector3.new(0.2, 0.2, 0.2), origin + Vector3.new(0, 5.2, -7.8), accent)
+signAnchor.Transparency = 1
+signAnchor.CanCollide = false
+local sign = Instance.new("BillboardGui")
+sign.Name = "SwimTestSign"
+sign.Adornee = signAnchor
+sign.Size = UDim2.fromOffset(270, 58)
+sign.AlwaysOnTop = true
+sign.Parent = signAnchor
+local label = Instance.new("TextLabel")
+label.Size = UDim2.fromScale(1, 1)
+label.BackgroundColor3 = Color3.fromRGB(6, 20, 28)
+label.BackgroundTransparency = 0.08
+label.BorderSizePixel = 3
+label.BorderColor3 = tile
+label.TextColor3 = accent
+label.Font = Enum.Font.Code
+label.TextScaled = true
+label.Text = "SWIM TEST  •  WASD / SPACE / CTRL"
+label.Parent = sign
+
+return HttpService:JSONEncode({
+    name = model.Name,
+    center = { x = origin.X, y = origin.Y, z = origin.Z },
+    size = { x = waterSize.X, y = waterSize.Y, z = waterSize.Z },
+    material = "Water",
+})`,
+}));
+
 const tree = parseToolPayload(await client.callTool("get_file_tree", {
   path: "game.ReplicatedStorage.SpriteForgeRuntime",
 }));
@@ -224,5 +317,6 @@ console.log(JSON.stringify({
   paletteColors: build.colors,
   chunks: build.chunks,
   ladder,
+  pool,
   runtimeChildren: tree?.tree?.children?.map((child) => child.name) ?? [],
 }));

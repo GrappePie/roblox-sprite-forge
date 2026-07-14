@@ -114,6 +114,12 @@ export async function createStudioAtlasPayload(sourceDirectory, appearanceFinger
       JumpFps: 11,
       FallFps: 11,
       ClimbFps: 10,
+      SwimIdleFps: (clipFrameCounts.swim_idle ?? clipFrameCounts.idle) / 4,
+      SwimFps: 10,
+      SwimEnterSpeedThreshold: 1.25,
+      SwimExitSpeedThreshold: 0.7,
+      SwimPitchEnterRatio: 0.38,
+      SwimPitchExitRatio: 0.22,
       RunSpeedThreshold: 18,
       DirectionRows: {
         down: 0,

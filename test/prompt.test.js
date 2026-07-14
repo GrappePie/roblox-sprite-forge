@@ -17,14 +17,14 @@ const bundle = {
   },
 };
 
-test("el plan tiene siete clips configurables para ocho direcciones", () => {
+test("el plan tiene once clips configurables para ocho direcciones", () => {
   const plan = getFramePlan();
-  assert.equal(plan.length, 224);
-  assert.deepEqual([...new Set(plan.map((item) => item.row))], Array.from({ length: 56 }, (_, index) => index));
+  assert.equal(plan.length, 352);
+  assert.deepEqual([...new Set(plan.map((item) => item.row))], Array.from({ length: 88 }, (_, index) => index));
   assert.deepEqual([...new Set(plan.map((item) => item.column))], [0, 1, 2, 3]);
   assert.equal(plan[0].key, "down_idle_1");
-  assert.equal(plan.at(-1).key, "down_right_idle_alt_4");
-  assert.equal(getFramePlan({ framesPerAnimation: 6 }).length, 336);
+  assert.equal(plan.at(-1).key, "down_right_swim_down_4");
+  assert.equal(getFramePlan({ framesPerAnimation: 6 }).length, 528);
   assert.deepEqual(DIRECTIONS.map((direction) => direction.key), [
     "down", "down_left", "left", "up_left", "up", "up_right", "right", "down_right",
   ]);
@@ -41,12 +41,40 @@ test("el idle puede usar 16 frames sin volver a capturar los demás clips", () =
     fall: 8,
     climb: 8,
     idle_alt: 16,
+    swim_idle: 16,
+    swim: 8,
+    swim_up: 8,
+    swim_down: 8,
   });
-  assert.equal(plan.length, 576);
+  assert.equal(plan.length, 896);
   assert.equal(plan.filter((frame) => frame.clip.key === "idle").length, 128);
   assert.equal(plan.filter((frame) => frame.clip.key === "idle_alt").length, 128);
   assert.equal(plan.filter((frame) => frame.clip.key === "walk").length, 64);
+  assert.equal(plan.filter((frame) => frame.clip.key === "swim_idle").length, 128);
+  assert.equal(plan.filter((frame) => frame.clip.key === "swim_up").length, 64);
   assert.equal(Math.max(...plan.map((frame) => frame.column)), 15);
+});
+
+test("nado separa flotación y las tres bandas de inclinación", () => {
+  const idle = buildFramePrompt({
+    bundle,
+    direction: DIRECTIONS[0],
+    clip: CLIPS.find((clip) => clip.key === "swim_idle"),
+    frameIndex: 5,
+    frameCount: 16,
+  });
+  const up = buildFramePrompt({
+    bundle,
+    direction: DIRECTIONS[7],
+    clip: CLIPS.find((clip) => clip.key === "swim_up"),
+    frameIndex: 3,
+    frameCount: 8,
+  });
+  assert.match(idle, /stationary tread-water loop/i);
+  assert.match(idle, /no ground baseline/i);
+  assert.match(up, /active swimming stroke/i);
+  assert.match(up, /upward about 30 degrees/i);
+  assert.match(up, /keep every arm and leg connected/i);
 });
 
 test("el idle alternativo conserva la respiración estable como fallback", () => {

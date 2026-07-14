@@ -130,7 +130,7 @@ export class StudioMcpClient {
 }
 
 export class StudioCaptureService {
-  constructor({ client, format = "jpeg", quality = 96, batchIdle = true }) {
+  constructor({ client, format = "jpeg", quality = 96, batchIdle = false }) {
     this.client = client;
     this.format = format;
     this.quality = quality;
@@ -148,7 +148,7 @@ export class StudioCaptureService {
     chroma,
     framesPerAnimation = 8,
     frameCounts = {},
-    clips = ["idle", "walk", "run", "jump", "fall", "climb"],
+    clips = ["idle", "walk", "run", "jump", "fall", "climb", "swim"],
     signal,
   }) {
     if (this.active) {
@@ -225,6 +225,10 @@ export class StudioCaptureService {
         jump: new Map(),
         fall: new Map(),
         climb: new Map(),
+        swim_idle: new Map(),
+        swim: new Map(),
+        swim_up: new Map(),
+        swim_down: new Map(),
       };
       const captureMethods = {};
       const batchFallbacks = [];
@@ -236,6 +240,10 @@ export class StudioCaptureService {
         { key: "jump", catalogKey: "JumpAnimation" },
         { key: "fall", catalogKey: "FallAnimation" },
         { key: "climb", catalogKey: "ClimbAnimation" },
+        { key: "swim_idle", catalogKey: "SwimIdleAnimation", selectionKey: "swim" },
+        { key: "swim", catalogKey: "SwimAnimation", selectionKey: "swim" },
+        { key: "swim_up", catalogKey: "SwimAnimation", selectionKey: "swim" },
+        { key: "swim_down", catalogKey: "SwimAnimation", selectionKey: "swim" },
       ];
       for (const motion of motionDefinitions) {
         if (!selectedClips.has(motion.selectionKey ?? motion.key)) continue;
@@ -250,7 +258,11 @@ export class StudioCaptureService {
           if (setup.ready) {
             const requestedFrameCount = frameCounts[motion.key] ?? framesPerAnimation;
             const frameCount = Math.max(2, Math.min(16, Math.trunc(Number(requestedFrameCount)) || 8));
-            const canBatch = this.batchIdle && ["idle", "idle_alt"].includes(motion.key);
+            // El modo por lotes conserva varias copias del rig en el mundo y es
+            // incompatible con algunos cuerpos mixtos y prendas en capas. Se
+            // mantiene sólo como opción experimental; producción usa un único
+            // rig y una pose por captura para preservar la geometría real.
+            const canBatch = this.batchIdle;
             let capturedAsBatch = false;
             if (canBatch) {
               try {
@@ -329,6 +341,10 @@ export class StudioCaptureService {
       const jumpImages = motionImages.jump;
       const fallImages = motionImages.fall;
       const climbImages = motionImages.climb;
+      const swimIdleImages = motionImages.swim_idle;
+      const swimImages = motionImages.swim;
+      const swimUpImages = motionImages.swim_up;
+      const swimDownImages = motionImages.swim_down;
       return {
         images,
         idleImages,
@@ -338,6 +354,10 @@ export class StudioCaptureService {
         jumpImages,
         fallImages,
         climbImages,
+        swim_idleImages: swimIdleImages,
+        swimImages,
+        swim_upImages: swimUpImages,
+        swim_downImages: swimDownImages,
         animationCatalog,
         source: {
           mode: "studio-3d-turntable",
@@ -351,6 +371,10 @@ export class StudioCaptureService {
           capturedJumpFrames: jumpImages.size,
           capturedFallFrames: fallImages.size,
           capturedClimbFrames: climbImages.size,
+          capturedSwimIdleFrames: swimIdleImages.size,
+          capturedSwimFrames: swimImages.size,
+          capturedSwimUpFrames: swimUpImages.size,
+          capturedSwimDownFrames: swimDownImages.size,
           idleMotionSource: idleImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
           idleAltMotionSource: idleAltImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
           walkMotionSource: walkImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
@@ -358,6 +382,10 @@ export class StudioCaptureService {
           jumpMotionSource: jumpImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
           fallMotionSource: fallImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
           climbMotionSource: climbImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
+          swimIdleMotionSource: swimIdleImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
+          swimMotionSource: swimImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
+          swimUpMotionSource: swimUpImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
+          swimDownMotionSource: swimDownImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
           recapturedClips: [...selectedClips],
           captureMethods,
           screenshotCalls,
@@ -512,7 +540,7 @@ local HttpService = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
 local InsertService = game:GetService("InsertService")
 
-for _, trackName in ipairs({"SpriteForgeCaptureIdleTrack", "SpriteForgeCaptureIdleAltTrack", "SpriteForgeCaptureWalkTrack", "SpriteForgeCaptureRunTrack", "SpriteForgeCaptureJumpTrack", "SpriteForgeCaptureFallTrack", "SpriteForgeCaptureClimbTrack"}) do
+for _, trackName in ipairs({"SpriteForgeCaptureIdleTrack", "SpriteForgeCaptureIdleAltTrack", "SpriteForgeCaptureWalkTrack", "SpriteForgeCaptureRunTrack", "SpriteForgeCaptureJumpTrack", "SpriteForgeCaptureFallTrack", "SpriteForgeCaptureClimbTrack", "SpriteForgeCaptureSwimIdleTrack", "SpriteForgeCaptureSwimTrack", "SpriteForgeCaptureSwimUpTrack", "SpriteForgeCaptureSwimDownTrack"}) do
     local track = _G[trackName]
     if track then pcall(function() track:Stop(0) end) end
     _G[trackName] = nil
@@ -644,7 +672,37 @@ local function resolveIdleAnimationIds(assetId)
     container:Destroy()
     return primary, alternate
 end
+local function resolveSwimAnimationIds(assetId)
+    local numericId = tonumber(assetId)
+    if not numericId or numericId <= 0 then return nil, nil end
+    local ok, container = pcall(function()
+        return InsertService:LoadAsset(numericId)
+    end)
+    if not ok or not container then return nil, nil end
+    local candidates = {}
+    local active = nil
+    local idle = nil
+    for _, item in ipairs(container:GetDescendants()) do
+        if item:IsA("Animation") then
+            table.insert(candidates, item.AnimationId)
+            local parentName = item.Parent and item.Parent.Name or ""
+            local signature = string.lower(item.Name .. parentName):gsub("[^%w]", "")
+            if string.find(signature, "swim", 1, true) then
+                if string.find(signature, "idle", 1, true) then
+                    idle = idle or item.AnimationId
+                else
+                    active = active or item.AnimationId
+                end
+            end
+        end
+    end
+    active = active or candidates[1]
+    idle = idle or candidates[2] or active
+    container:Destroy()
+    return active, idle
+end
 local resolvedIdle, resolvedIdleAlt = resolveIdleAnimationIds(description.IdleAnimation)
+local resolvedSwim, resolvedSwimIdle = resolveSwimAnimationIds(description.SwimAnimation)
 local resolvedAnimations = {
     IdleAnimation = resolvedIdle,
     IdleAltAnimation = resolvedIdleAlt,
@@ -653,6 +711,8 @@ local resolvedAnimations = {
     JumpAnimation = resolveAnimationId(description.JumpAnimation, "JumpAnim"),
     FallAnimation = resolveAnimationId(description.FallAnimation, "FallAnim"),
     ClimbAnimation = resolveAnimationId(description.ClimbAnimation, "ClimbAnim"),
+    SwimAnimation = resolvedSwim,
+    SwimIdleAnimation = resolvedSwimIdle,
 }
 if resolvedAnimations.IdleAnimation then
     rig:SetAttribute("SpriteForgeIdleAnimationId", resolvedAnimations.IdleAnimation)
@@ -674,6 +734,12 @@ if resolvedAnimations.FallAnimation then
 end
 if resolvedAnimations.ClimbAnimation then
     rig:SetAttribute("SpriteForgeClimbAnimationId", resolvedAnimations.ClimbAnimation)
+end
+if resolvedAnimations.SwimAnimation then
+    rig:SetAttribute("SpriteForgeSwimAnimationId", resolvedAnimations.SwimAnimation)
+end
+if resolvedAnimations.SwimIdleAnimation then
+    rig:SetAttribute("SpriteForgeSwimIdleAnimationId", resolvedAnimations.SwimIdleAnimation)
 end
 local emotes = {}
 pcall(function()
@@ -704,6 +770,7 @@ local initialBounds, initialSize = rig:GetBoundingBox()
 -- haciendo que el sprite parezca desplazarse aunque la raíz esté fija.
 _G.SpriteForgeCaptureTarget = initialBounds.Position
 _G.SpriteForgeCaptureDistance = math.max(initialSize.X, initialSize.Y, initialSize.Z) * 4.4
+_G.SpriteForgeCaptureBasePivot = rig:GetPivot()
 if initialCamera and not _G.SpriteForgeCapturePreviousCamera then
     _G.SpriteForgeCapturePreviousCamera = {
         CameraType = initialCamera.CameraType,
@@ -737,11 +804,11 @@ local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
 local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
-local animationId = rig and rig:GetAttribute("SpriteForge${motion.title}AnimationId")
+local animationId = rig and rig:GetAttribute("SpriteForge${motion.animationTitle}AnimationId")
 if not rig or not humanoid or typeof(animationId) ~= "string" or animationId == "" then
     return HttpService:JSONEncode({ready = false, reason = "${motion.lower}_animation_missing"})
 end
-for _, trackName in ipairs({"SpriteForgeCaptureIdleTrack", "SpriteForgeCaptureIdleAltTrack", "SpriteForgeCaptureWalkTrack", "SpriteForgeCaptureRunTrack", "SpriteForgeCaptureJumpTrack", "SpriteForgeCaptureFallTrack", "SpriteForgeCaptureClimbTrack"}) do
+for _, trackName in ipairs({"SpriteForgeCaptureIdleTrack", "SpriteForgeCaptureIdleAltTrack", "SpriteForgeCaptureWalkTrack", "SpriteForgeCaptureRunTrack", "SpriteForgeCaptureJumpTrack", "SpriteForgeCaptureFallTrack", "SpriteForgeCaptureClimbTrack", "SpriteForgeCaptureSwimIdleTrack", "SpriteForgeCaptureSwimTrack", "SpriteForgeCaptureSwimUpTrack", "SpriteForgeCaptureSwimDownTrack"}) do
     local oldTrack = _G[trackName]
     if oldTrack then pcall(function() oldTrack:Stop(0) end) end
     _G[trackName] = nil
@@ -792,8 +859,12 @@ _G.SpriteForgeCaptureAngle = ${Number(angle)}
 local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
 local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
 local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-local expectedId = rig and rig:GetAttribute("SpriteForge${motion.title}AnimationId")
+local expectedId = rig and rig:GetAttribute("SpriteForge${motion.animationTitle}AnimationId")
 local track = _G.SpriteForgeCapture${motion.title}Track
+local basePivot = _G.SpriteForgeCaptureBasePivot
+if rig and typeof(basePivot) == "CFrame" then
+    rig:PivotTo(basePivot * CFrame.Angles(math.rad(${motion.pitchDegrees}), 0, 0))
+end
 if (not track or track.Length <= 0) and animator then
     for _, candidate in ipairs(animator:GetPlayingAnimationTracks()) do
         if candidate.Length > 0 and candidate.Animation and candidate.Animation.AnimationId == expectedId then
@@ -822,8 +893,12 @@ local Workspace = game:GetService("Workspace")
 local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
 local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
 local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-local expectedId = rig and rig:GetAttribute("SpriteForge${motion.title}AnimationId")
+local expectedId = rig and rig:GetAttribute("SpriteForge${motion.animationTitle}AnimationId")
 local track = _G.SpriteForgeCapture${motion.title}Track
+local basePivot = _G.SpriteForgeCaptureBasePivot
+if rig and typeof(basePivot) == "CFrame" then
+    rig:PivotTo(basePivot * CFrame.Angles(math.rad(${motion.pitchDegrees}), 0, 0))
+end
 if (not track or track.Length <= 0) and animator then
     for _, candidate in ipairs(animator:GetPlayingAnimationTracks()) do
         if candidate.Length > 0 and candidate.Animation and candidate.Animation.AnimationId == expectedId then
@@ -915,6 +990,8 @@ local folder = Workspace:FindFirstChild("SpriteForgeBatchCapture")
 if folder then folder:Destroy() end
 local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
 if rig then
+    local basePivot = _G.SpriteForgeCaptureBasePivot
+    if typeof(basePivot) == "CFrame" then rig:PivotTo(basePivot) end
     for _, item in ipairs(rig:GetDescendants()) do
         if item:IsA("BasePart") then item.LocalTransparencyModifier = 0 end
     end
@@ -935,6 +1012,8 @@ local batch = Workspace:FindFirstChild("SpriteForgeBatchCapture")
 if batch then batch:Destroy() end
 local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
 if rig then
+    local basePivot = _G.SpriteForgeCaptureBasePivot
+    if typeof(basePivot) == "CFrame" then rig:PivotTo(basePivot) end
     for _, item in ipairs(rig:GetDescendants()) do
         if item:IsA("BasePart") then item.LocalTransparencyModifier = 0 end
     end
@@ -955,6 +1034,7 @@ _G.SpriteForgeCaptureTarget = nil
 _G.SpriteForgeCaptureDistance = nil
 _G.SpriteForgeCaptureFieldOfView = nil
 _G.SpriteForgeBatchActive = nil
+_G.SpriteForgeCaptureBasePivot = nil
 _G.SpriteForgeCaptureIdleTrack = nil
 _G.SpriteForgeCaptureIdleAltTrack = nil
 _G.SpriteForgeCaptureWalkTrack = nil
@@ -962,6 +1042,10 @@ _G.SpriteForgeCaptureRunTrack = nil
 _G.SpriteForgeCaptureJumpTrack = nil
 _G.SpriteForgeCaptureFallTrack = nil
 _G.SpriteForgeCaptureClimbTrack = nil
+_G.SpriteForgeCaptureSwimIdleTrack = nil
+_G.SpriteForgeCaptureSwimTrack = nil
+_G.SpriteForgeCaptureSwimUpTrack = nil
+_G.SpriteForgeCaptureSwimDownTrack = nil
 return true`;
 }
 
@@ -969,7 +1053,7 @@ function buildServerCleanupCode() {
   return `
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
-for _, trackName in ipairs({"SpriteForgeCaptureIdleTrack", "SpriteForgeCaptureIdleAltTrack", "SpriteForgeCaptureWalkTrack", "SpriteForgeCaptureRunTrack", "SpriteForgeCaptureJumpTrack", "SpriteForgeCaptureFallTrack", "SpriteForgeCaptureClimbTrack"}) do
+for _, trackName in ipairs({"SpriteForgeCaptureIdleTrack", "SpriteForgeCaptureIdleAltTrack", "SpriteForgeCaptureWalkTrack", "SpriteForgeCaptureRunTrack", "SpriteForgeCaptureJumpTrack", "SpriteForgeCaptureFallTrack", "SpriteForgeCaptureClimbTrack", "SpriteForgeCaptureSwimIdleTrack", "SpriteForgeCaptureSwimTrack", "SpriteForgeCaptureSwimUpTrack", "SpriteForgeCaptureSwimDownTrack"}) do
     local track = _G[trackName]
     if track then pcall(function() track:Stop(0) end) end
     _G[trackName] = nil
@@ -1004,13 +1088,20 @@ return true`;
 
 function getMotionDefinition(clipKey) {
   const definitions = {
-    idle: { title: "Idle", lower: "idle", looped: true },
-    idle_alt: { title: "IdleAlt", lower: "idle_alt", looped: true },
-    walk: { title: "Walk", lower: "walk", looped: true },
-    run: { title: "Run", lower: "run", looped: true },
-    jump: { title: "Jump", lower: "jump", looped: false },
-    fall: { title: "Fall", lower: "fall", looped: true },
-    climb: { title: "Climb", lower: "climb", looped: true },
+    idle: { title: "Idle", animationTitle: "Idle", lower: "idle", looped: true, pitchDegrees: 0 },
+    idle_alt: { title: "IdleAlt", animationTitle: "IdleAlt", lower: "idle_alt", looped: true, pitchDegrees: 0 },
+    walk: { title: "Walk", animationTitle: "Walk", lower: "walk", looped: true, pitchDegrees: 0 },
+    run: { title: "Run", animationTitle: "Run", lower: "run", looped: true, pitchDegrees: 0 },
+    jump: { title: "Jump", animationTitle: "Jump", lower: "jump", looped: false, pitchDegrees: 0 },
+    fall: { title: "Fall", animationTitle: "Fall", lower: "fall", looped: true, pitchDegrees: 0 },
+    climb: { title: "Climb", animationTitle: "Climb", lower: "climb", looped: true, pitchDegrees: 0 },
+    swim_idle: { title: "SwimIdle", animationTitle: "SwimIdle", lower: "swim_idle", looped: true, pitchDegrees: 0 },
+    // La animación equipada mueve las articulaciones, pero el rig de captura
+    // no recibe la inclinación física que Humanoid aplica al nadar. Rotamos el
+    // cuerpo completo alrededor de su raíz para reconstruir esa orientación.
+    swim: { title: "Swim", animationTitle: "Swim", lower: "swim", looped: true, pitchDegrees: -90 },
+    swim_up: { title: "SwimUp", animationTitle: "Swim", lower: "swim_up", looped: true, pitchDegrees: -60 },
+    swim_down: { title: "SwimDown", animationTitle: "Swim", lower: "swim_down", looped: true, pitchDegrees: -120 },
   };
   return definitions[clipKey] ?? definitions.walk;
 }

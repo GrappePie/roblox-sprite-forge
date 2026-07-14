@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
 import { AppError } from "./errors.js";
 
-const CAPTURE_CLIPS = Object.freeze(["idle", "walk", "run", "jump", "fall", "climb"]);
+const CAPTURE_CLIPS = Object.freeze(["idle", "walk", "run", "jump", "fall", "climb", "swim"]);
 
 export function readGenerationPayload(body, config) {
   return {

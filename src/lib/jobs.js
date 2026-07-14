@@ -35,6 +35,7 @@ import {
   assembleSpriteSheet,
   chooseChromaColor,
   createStudioCellTransform,
+  createStudioSwimCellTransform,
   createAtlasData,
   createPixelPreview,
   prepareAvatarReference,
@@ -45,11 +46,20 @@ import {
 } from "./postprocess.js";
 import { createZip } from "./archive.js";
 
-const STUDIO_CLIP_KEYS = Object.freeze(CLIPS.map((clip) => clip.key).filter((clip) => clip !== "idle_alt"));
+const STUDIO_CLIP_KEYS = Object.freeze(["idle", "walk", "run", "jump", "fall", "climb", "swim"]);
 const STUDIO_CAPTURED_ANIMATION_CLIP_KEYS = Object.freeze(CLIPS.map((clip) => clip.key));
-const STUDIO_MOTION_CLIP_KEYS = Object.freeze(
-  STUDIO_CLIP_KEYS.filter((clip) => clip !== "idle"),
-);
+
+function captureSelectionForClip(clip) {
+  if (clip === "idle" || clip === "idle_alt") return "idle";
+  if (clip.startsWith("swim")) return "swim";
+  return clip;
+}
+
+function internalClipsForSelection(selection) {
+  return STUDIO_CAPTURED_ANIMATION_CLIP_KEYS.filter(
+    (clip) => captureSelectionForClip(clip) === selection,
+  );
+}
 
 export class JobManager {
   constructor({
@@ -366,10 +376,11 @@ export class JobManager {
       const studioMotionCells = new Map();
       if (this.studioCapture) {
         const explicitlyRequested = new Set(job.input.recaptureClips ?? []);
-        const captureClips = STUDIO_CLIP_KEYS.filter((clip) => {
-          const expectedMotionFrames = DIRECTIONS.length * frameCounts[clip];
-          if (explicitlyRequested.has(clip)) return true;
-          if (clip === "idle") {
+        const captureClips = STUDIO_CLIP_KEYS.filter((selection) => {
+          if (explicitlyRequested.has(selection)) return true;
+          const internalClips = internalClipsForSelection(selection);
+          if (selection === "idle") {
+            const expectedMotionFrames = DIRECTIONS.length * frameCounts.idle;
             const hasDirections = reusableStudioCapture?.images?.size === DIRECTIONS.length;
             const hasPrimary = reusableStudioCapture?.idleImages?.size === expectedMotionFrames;
             const expectsAlternate = Boolean(
@@ -378,7 +389,10 @@ export class JobManager {
             const hasAlternate = reusableStudioCapture?.idleAltImages?.size === expectedMotionFrames;
             return !hasDirections || !hasPrimary || (expectsAlternate && !hasAlternate);
           }
-          return reusableStudioCapture?.[`${clip}Images`]?.size !== expectedMotionFrames;
+          return internalClips.some((clip) => (
+            reusableStudioCapture?.[studioImagesProperty(clip)]?.size
+              !== DIRECTIONS.length * frameCounts[clip]
+          ));
         });
         this.update(job, {
           status: captureClips.length ? "capturing" : "resolving",
@@ -463,6 +477,10 @@ export class JobManager {
         jump: studioTurntable?.jumpImages,
         fall: studioTurntable?.fallImages,
         climb: studioTurntable?.climbImages,
+        swim_idle: studioTurntable?.swim_idleImages,
+        swim: studioTurntable?.swimImages,
+        swim_up: studioTurntable?.swim_upImages,
+        swim_down: studioTurntable?.swim_downImages,
       };
       for (const direction of [...new Set(plan.map((frame) => frame.direction.key))]) {
         const directionFrames = plan.filter((frame) => frame.direction.key === direction);
@@ -474,6 +492,7 @@ export class JobManager {
         let directionMasterName = null;
         let directionMasterCell = null;
         let studioCellTransform = null;
+        let studioSwimCellTransform = null;
 
         for (const frame of directionFrames) {
           const poseGuide = await createPoseGuide(frame, job.input);
@@ -504,6 +523,10 @@ export class JobManager {
               { trim: false },
             );
             studioCellTransform = await createStudioCellTransform(transparentStudioReference, job.input);
+            studioSwimCellTransform = await createStudioSwimCellTransform(
+              transparentStudioReference,
+              job.input,
+            );
             cell = await renderStudioSpriteCell(
               transparentStudioReference,
               studioCellTransform,
@@ -547,10 +570,10 @@ export class JobManager {
               );
               cell = await renderStudioSpriteCell(
                 transparentMotionReference,
-                studioCellTransform,
+                frame.clip.key.startsWith("swim") ? studioSwimCellTransform : studioCellTransform,
                 job.input,
               );
-              if (!(await hasVerticalBodyContinuity(cell))) {
+              if (!frame.clip.key.startsWith("swim") && !(await hasVerticalBodyContinuity(cell))) {
                 throw new AppError(`La pose real ${frame.key} perdió la continuidad entre torso y pies.`, {
                   status: 502,
                   code: `studio_${frame.clip.key}_body_disconnected`,
@@ -558,7 +581,7 @@ export class JobManager {
               }
               studioMotionCells.set(frame.key, cell);
             } catch (error) {
-              if (frame.clip.key !== "idle" && frame.clip.key !== "idle_alt") throw error;
+              if (!["idle", "idle_alt", "swim_idle", "swim", "swim_up", "swim_down"].includes(frame.clip.key)) throw error;
               console.warn(
                 "[studio-idle-frame-fallback]",
                 job.id,
@@ -669,10 +692,11 @@ export class JobManager {
           for (const frameKey of studioMotionCells.keys()) {
             studioMotionCells.set(frameKey, harmonized.get(`motion:${frameKey}`));
           }
+          const plannedClipByKey = new Map(plan.map((frame) => [frame.key, frame.clip.key]));
           const capturedMotionFrames = Object.fromEntries(
             STUDIO_CAPTURED_ANIMATION_CLIP_KEYS.map((clip) => [
               clip,
-              [...studioMotionCells.keys()].filter((key) => key.includes(`_${clip}_`)).length,
+              [...studioMotionCells.keys()].filter((key) => plannedClipByKey.get(key) === clip).length,
             ]),
           );
           directionConsistency = {
@@ -697,6 +721,10 @@ export class JobManager {
                 capturedJumpFrames: capturedMotionFrames.jump,
                 capturedFallFrames: capturedMotionFrames.fall,
                 capturedClimbFrames: capturedMotionFrames.climb,
+                capturedSwimIdleFrames: capturedMotionFrames.swim_idle,
+                capturedSwimFrames: capturedMotionFrames.swim,
+                capturedSwimUpFrames: capturedMotionFrames.swim_up,
+                capturedSwimDownFrames: capturedMotionFrames.swim_down,
                 seedMode: "not-applicable",
               },
             palette: { mode: "shared-master-palette", colors: job.input.paletteColors },
@@ -1044,17 +1072,19 @@ function mergeStudioCaptures({ reusable, fresh, recapturedClips, frameCounts }) 
   const mergedMotion = {};
   for (const clip of STUDIO_CAPTURED_ANIMATION_CLIP_KEYS) {
     const property = studioImagesProperty(clip);
-    const frames = new Map(reusable?.[property] ?? []);
+    const selection = captureSelectionForClip(clip);
+    const frames = new Map(recapturedClips.includes(selection) ? [] : reusable?.[property] ?? []);
     for (const [key, buffer] of fresh?.[property] ?? []) frames.set(key, buffer);
     mergedMotion[clip] = frames;
   }
-  const reusedClips = STUDIO_CLIP_KEYS.filter((clip) => {
-    if (recapturedClips.includes(clip)) return false;
-    const expectedMotionFrames = DIRECTIONS.length * frameCounts[clip];
-    return clip === "idle"
+  const reusedClips = STUDIO_CLIP_KEYS.filter((selection) => {
+    if (recapturedClips.includes(selection)) return false;
+    return selection === "idle"
       ? reusable?.images?.size === DIRECTIONS.length
-        && reusable?.idleImages?.size === expectedMotionFrames
-      : reusable?.[`${clip}Images`]?.size === expectedMotionFrames;
+        && reusable?.idleImages?.size === DIRECTIONS.length * frameCounts.idle
+      : internalClipsForSelection(selection).every((clip) => (
+          reusable?.[studioImagesProperty(clip)]?.size === DIRECTIONS.length * frameCounts[clip]
+        ));
   });
   const source = {
     mode: "studio-3d-turntable",
@@ -1066,10 +1096,10 @@ function mergeStudioCaptures({ reusable, fresh, recapturedClips, frameCounts }) 
     reusedFromJobId: reusable?.source?.reusedFromJobId ?? null,
   };
   for (const clip of STUDIO_CAPTURED_ANIMATION_CLIP_KEYS) {
-    const title = `${clip[0].toUpperCase()}${clip.slice(1)}`;
-    const sourceTitle = clip === "idle_alt" ? "IdleAlt" : title;
+    const sourceTitle = clip.split("_").map((part) => `${part[0].toUpperCase()}${part.slice(1)}`).join("");
     source[`captured${sourceTitle}Frames`] = mergedMotion[clip].size;
-    const motionSourceKey = clip === "idle_alt" ? "idleAltMotionSource" : `${clip}MotionSource`;
+    const camelClip = clip.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+    const motionSourceKey = `${camelClip}MotionSource`;
     source[motionSourceKey] = mergedMotion[clip].size
       ? "equipped-roblox-animation"
       : "deterministic-fallback";
@@ -1115,6 +1145,10 @@ function deriveFrameSeed(directionSeed, clipKey, frameIndex) {
     jump: 3_000_091n,
     fall: 4_000_127n,
     climb: 5_000_167n,
+    swim_idle: 6_000_203n,
+    swim: 7_000_237n,
+    swim_up: 8_000_269n,
+    swim_down: 9_000_299n,
   };
   const clipOffset = clipOffsets[clipKey] ?? 0n;
   const phaseOffset = BigInt(frameIndex - 1) * 65_537n;
@@ -1144,6 +1178,10 @@ function isCompatibleDynamicAtlasJob(job) {
     && clips.includes("jump")
     && clips.includes("fall")
     && clips.includes("climb")
+    && clips.includes("swim_idle")
+    && clips.includes("swim")
+    && clips.includes("swim_up")
+    && clips.includes("swim_down")
     && [2, 4, 6, 8].includes(frames);
 }
 

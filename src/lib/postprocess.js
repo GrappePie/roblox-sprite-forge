@@ -252,6 +252,18 @@ export async function renderSpriteCell(input, { cellSize, paletteColors }) {
  * vuelve a recortar, centrar o escalar de forma independiente.
  */
 export async function createStudioCellTransform(reference, { cellSize, paletteColors } = {}) {
+  return createRegisteredStudioTransform(reference, { cellSize, paletteColors }, "feet");
+}
+
+/**
+ * Registra el nado alrededor del torso/raíz del rig. Una pose horizontal no
+ * tiene una línea de pies útil y por eso no debe heredar el pivote del suelo.
+ */
+export async function createStudioSwimCellTransform(reference, { cellSize, paletteColors } = {}) {
+  return createRegisteredStudioTransform(reference, { cellSize, paletteColors }, "torso");
+}
+
+async function createRegisteredStudioTransform(reference, { cellSize, paletteColors } = {}, anchorMode) {
   const { data, info } = await sharp(reference).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const size = clampInteger(cellSize, 16, 512, 64);
   const colors = clampInteger(paletteColors, 8, 256, 64);
@@ -270,9 +282,10 @@ export async function createStudioCellTransform(reference, { cellSize, paletteCo
   // encima del volumen idle. Reservar el mismo margen horizontal también
   // arriba evita recortarlo sin desplazar el pivote de los pies.
   // Accesorios altos (halos, cuernos, antenas) pueden tocar el borde cuando la
-  // animación de salto eleva todo el rig. El 14 % conserva esos píxeles sin
-  // recentrar la pose ni alterar el pivote compartido de los pies.
-  const paddingTop = Math.max(3, Math.round(size * 0.14));
+  // animación de salto eleva todo el rig. El 18 % reserva además el pequeño
+  // desplazamiento vertical real de las animaciones equipadas sin recentrar
+  // cada pose ni alterar el pivote compartido de los pies.
+  const paddingTop = Math.max(3, Math.round(size * 0.18));
   const paddingBottom = Math.max(3, Math.round(size * 0.07));
   const subjectWidth = anchor.bounds.right - anchor.bounds.left + 1;
   const subjectHeight = anchor.bounds.bottom - anchor.bounds.top + 1;
@@ -281,7 +294,13 @@ export async function createStudioCellTransform(reference, { cellSize, paletteCo
     (size - paddingTop - paddingBottom) / subjectHeight,
   );
   const targetX = Math.floor(size / 2) + 1;
-  const targetY = size - paddingBottom - 1;
+  const targetY = anchorMode === "torso" ? Math.floor(size / 2) : size - paddingBottom - 1;
+  const sourceAnchorX = anchorMode === "torso"
+    ? Math.round((anchor.bounds.left + anchor.bounds.right) / 2)
+    : anchor.x;
+  const sourceAnchorY = anchorMode === "torso"
+    ? Math.round(anchor.bounds.top + subjectHeight * 0.53)
+    : anchor.y;
   const windowWidth = Math.max(1, Math.round(size / scale));
   const windowHeight = Math.max(1, Math.round(size / scale));
 
@@ -293,8 +312,9 @@ export async function createStudioCellTransform(reference, { cellSize, paletteCo
     scale,
     windowWidth,
     windowHeight,
-    windowLeft: Math.round(anchor.x - targetX / scale),
-    windowTop: Math.round(anchor.y - targetY / scale),
+    windowLeft: Math.round(sourceAnchorX - targetX / scale),
+    windowTop: Math.round(sourceAnchorY - targetY / scale),
+    anchorMode,
   };
 }
 

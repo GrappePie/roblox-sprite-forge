@@ -63,6 +63,8 @@ type Controller = {
     idleAltElapsed: number,
     idleAltActive: boolean,
     nextIdleAltAt: number,
+    swimPitchBand: string,
+    swimMoving: boolean,
     planeCenterOffset: number,
     descendantConnection: RBXScriptConnection?,
     hiddenParts: { [BasePart]: number },
@@ -112,8 +114,8 @@ end
 local function decodeAtlas(metadata: any, chunks: { string }): buffer
     assert(metadata.Width > 0 and metadata.Height > 0, "Atlas dimensions are invalid")
     assert(
-        metadata.Width <= 4096 and metadata.Height <= 8192
-            and metadata.Width * metadata.Height <= 16_777_216,
+        metadata.Width <= 4096 and metadata.Height <= 16_384
+            and metadata.Width * metadata.Height <= 33_554_432,
         "Atlas exceeds the safe client decode budget"
     )
     assert(#chunks == metadata.Rows, "Atlas chunk count does not match its rows")
@@ -364,7 +366,14 @@ local function updateSpritePlane(controller: Controller)
         return
     end
 
-    local center = controller.root.Position + Vector3.new(0, controller.planeCenterOffset, 0)
+    local swimming = controller.humanoid:GetState() == Enum.HumanoidStateType.Swimming
+    local center = if swimming
+        then controller.root.Position
+        else controller.root.Position + Vector3.new(0, controller.planeCenterOffset, 0)
+    local anchorMode = if swimming then "humanoid-root-swim" else "humanoid-feet-ground"
+    if controller.surface:GetAttribute("ActiveAnchorMode") ~= anchorMode then
+        controller.surface:SetAttribute("ActiveAnchorMode", anchorMode)
+    end
     local cameraOffset = camera.CFrame.Position - center
     local flatCameraOffset = Vector3.new(cameraOffset.X, 0, cameraOffset.Z)
     if flatCameraOffset.Magnitude < 0.05 then
@@ -533,6 +542,8 @@ local function attachCharacter(player: Player, character: Model)
         idleAltElapsed = 0,
         idleAltActive = false,
         nextIdleAltAt = 6 + math.random() * 8,
+        swimPitchBand = "level",
+        swimMoving = false,
         planeCenterOffset = planeCenterOffset,
         descendantConnection = nil,
         hiddenParts = {},
@@ -599,6 +610,41 @@ local function getViewDirection(root: BasePart, fallback: string): string
     return bestDirection
 end
 
+local function updateSwimPitchBand(controller: Controller, metadata: any): string
+    local velocity = controller.root.AssemblyLinearVelocity
+    local horizontalSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+    local speed = velocity.Magnitude
+    local enterSpeed = tonumber(metadata.SwimEnterSpeedThreshold) or 1.25
+    local exitSpeed = tonumber(metadata.SwimExitSpeedThreshold) or 0.7
+    if controller.swimMoving then
+        if speed <= exitSpeed then controller.swimMoving = false end
+    elseif speed >= enterSpeed then
+        controller.swimMoving = true
+    end
+    if not controller.swimMoving then
+        controller.swimPitchBand = "level"
+        return controller.swimPitchBand
+    end
+
+    local ratio = math.abs(velocity.Y) / math.max(horizontalSpeed, 0.1)
+    local enterRatio = tonumber(metadata.SwimPitchEnterRatio) or 0.38
+    local exitRatio = tonumber(metadata.SwimPitchExitRatio) or 0.22
+    if controller.swimPitchBand == "level" then
+        if ratio >= enterRatio then
+            controller.swimPitchBand = if velocity.Y >= 0 then "up" else "down"
+        end
+    elseif ratio <= exitRatio then
+        controller.swimPitchBand = "level"
+    elseif ratio >= enterRatio then
+        if velocity.Y > 0 then
+            controller.swimPitchBand = "up"
+        elseif velocity.Y < 0 then
+            controller.swimPitchBand = "down"
+        end
+    end
+    return controller.swimPitchBand
+end
+
 local function discardAtlas(userId: number)
     local old = atlases[userId]
     atlases[userId] = nil
@@ -644,7 +690,10 @@ local function loadReplicatedFolder(folder: Instance)
     if not folder:IsA("Folder") or loadingReplicated[folder] then return end
     loadingReplicated[folder] = true
     task.spawn(function()
-        for _ = 1, 120 do
+        -- La entrega local puede tardar más en un atlas grande o con Studio
+        -- ocupado. Esperar hasta 90 s evita declarar fallo mientras los
+        -- micro-lotes todavía están llegando.
+        for _ = 1, 360 do
             if not folder.Parent then break end
             if folder:GetAttribute("Status") == "ready" then
                 local envelopeValue = folder:FindFirstChild("Envelope")
@@ -741,21 +790,41 @@ RunService:BindToRenderStep("SpriteForgePixelAvatarRender", Enum.RenderPriority.
         )
         local humanoidState = controller.humanoid:GetState()
         local verticalVelocity = controller.root.AssemblyLinearVelocity.Y
-        local climbing = metadata.ClipRows.climb ~= nil
+        local swimming = metadata.ClipRows.swim ~= nil
+            and metadata.ClipRows.swim_idle ~= nil
+            and metadata.ClipRows.swim_up ~= nil
+            and metadata.ClipRows.swim_down ~= nil
+            and humanoidState == Enum.HumanoidStateType.Swimming
+        local swimPitchBand = if swimming
+            then updateSwimPitchBand(controller, metadata)
+            else "level"
+        if not swimming then
+            controller.swimPitchBand = "level"
+            controller.swimMoving = false
+        end
+        local climbing = not swimming and metadata.ClipRows.climb ~= nil
             and humanoidState == Enum.HumanoidStateType.Climbing
         -- Permanecer sujeto a la escalera selecciona la pose de climb, pero el
         -- ciclo solo debe avanzar cuando el personaje realmente gana o pierde
         -- altura. Esto también evita caminar en el sitio al llegar a un extremo.
         local climbSpeedThreshold = tonumber(metadata.ClimbSpeedThreshold) or 0.5
         local climbingMoving = climbing and math.abs(verticalVelocity) >= climbSpeedThreshold
-        local airborne = not climbing and (controller.humanoid.FloorMaterial == Enum.Material.Air
+        local airborne = not swimming and not climbing and (controller.humanoid.FloorMaterial == Enum.Material.Air
             or humanoidState == Enum.HumanoidStateType.Jumping
             or humanoidState == Enum.HumanoidStateType.Freefall)
         local jumping = metadata.ClipRows.jump ~= nil and airborne and (
             humanoidState == Enum.HumanoidStateType.Jumping or verticalVelocity > 0.75
         )
         local falling = metadata.ClipRows.fall ~= nil and airborne and not jumping
-        local clip = if climbing
+        local clip = if swimming
+            then if not controller.swimMoving
+                then "swim_idle"
+                elseif swimPitchBand == "up"
+                then "swim_up"
+                elseif swimPitchBand == "down"
+                then "swim_down"
+                else "swim"
+            elseif climbing
             then "climb"
             elseif jumping
             then "jump"
@@ -791,7 +860,9 @@ RunService:BindToRenderStep("SpriteForgePixelAvatarRender", Enum.RenderPriority.
             controller.idleAltActive = false
             controller.nextIdleAltAt = 6 + math.random() * 8
         end
-        local direction = getViewDirection(controller.root, controller.lastDirection)
+        local direction = if swimming and horizontalVelocity < 0.15
+            then controller.lastDirection
+            else getViewDirection(controller.root, controller.lastDirection)
         local debugDirection = controller.player:GetAttribute("SpriteForgeDebugDirection")
         local debugClip = controller.player:GetAttribute("SpriteForgeDebugClip")
         if typeof(debugDirection) == "string" and metadata.DirectionRows[debugDirection] ~= nil then
@@ -819,6 +890,10 @@ RunService:BindToRenderStep("SpriteForgePixelAvatarRender", Enum.RenderPriority.
             then metadata.FallFps or 11
             elseif clip == "climb"
             then metadata.ClimbFps or 10
+            elseif clip == "swim_idle"
+            then metadata.SwimIdleFps or metadata.IdleFps
+            elseif clip == "swim" or clip == "swim_up" or clip == "swim_down"
+            then metadata.SwimFps or 10
             elseif clip == "idle_alt"
             then metadata.IdleAltFps or metadata.IdleFps
             else metadata.IdleFps
@@ -841,6 +916,9 @@ RunService:BindToRenderStep("SpriteForgePixelAvatarRender", Enum.RenderPriority.
         controller.surface:SetAttribute("Airborne", airborne)
         controller.surface:SetAttribute("Climbing", climbing)
         controller.surface:SetAttribute("ClimbMoving", climbingMoving)
+        controller.surface:SetAttribute("Swimming", swimming)
+        controller.surface:SetAttribute("SwimMoving", controller.swimMoving)
+        controller.surface:SetAttribute("SwimPitchBand", swimPitchBand)
         controller.surface:SetAttribute("VerticalVelocity", verticalVelocity)
     end
 end)
@@ -852,4 +930,4 @@ Players.PlayerRemoving:Connect(function(player)
     discardAtlas(player.UserId)
 end)
 
-print("[SpriteForgePixelAvatar] dynamic atlas client ready with idle/idle_alt/walk/run/jump/fall/climb; 3D remains visible until a matching fingerprint arrives")
+print("[SpriteForgePixelAvatar] dynamic atlas client ready with idle/idle_alt/walk/run/jump/fall/climb/swim; 3D remains visible until a matching fingerprint arrives")

@@ -133,6 +133,12 @@ ${clipFrameCountSource}
 \tJumpFps = 11,
 \tFallFps = 11,
 \tClimbFps = 10,
+\tSwimIdleFps = ${(clipFrameCounts.swim_idle ?? clipFrameCounts.idle) / 4},
+\tSwimFps = 10,
+\tSwimEnterSpeedThreshold = 1.25,
+\tSwimExitSpeedThreshold = 0.7,
+\tSwimPitchEnterRatio = 0.38,
+\tSwimPitchExitRatio = 0.22,
 \tRunSpeedThreshold = 18,
 \tDirectionRows = {
 ${directionRows}

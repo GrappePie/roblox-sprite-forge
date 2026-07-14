@@ -30,7 +30,7 @@ export const config = Object.freeze({
     )),
     format: envAllowedString("ROBLOX_STUDIO_CAPTURE_FORMAT", "png", ["jpeg", "png"]),
     quality: envInteger("ROBLOX_STUDIO_CAPTURE_QUALITY", 96, 70, 100),
-    batchIdle: envBoolean("ROBLOX_STUDIO_BATCH_IDLE", true),
+    batchIdle: envBoolean("ROBLOX_STUDIO_BATCH_IDLE", false),
   }),
   models: Object.freeze({
     unet: envString("COMFYUI_UNET", "flux-2-klein-4b-fp8.safetensors"),

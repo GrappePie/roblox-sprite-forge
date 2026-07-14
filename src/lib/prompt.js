@@ -17,6 +17,10 @@ export const CLIPS = Object.freeze([
   { key: "fall", rowOffset: 4, label: "caer" },
   { key: "climb", rowOffset: 5, label: "escalar" },
   { key: "idle_alt", rowOffset: 6, label: "idle alternativo" },
+  { key: "swim_idle", rowOffset: 7, label: "flotar en agua" },
+  { key: "swim", rowOffset: 8, label: "nadar a nivel" },
+  { key: "swim_up", rowOffset: 9, label: "nadar hacia arriba" },
+  { key: "swim_down", rowOffset: 10, label: "nadar hacia abajo" },
 ]);
 
 const STYLE_INSTRUCTIONS = Object.freeze({
@@ -37,7 +41,9 @@ export function getClipFrameCounts({
   );
   return Object.freeze(Object.fromEntries(CLIPS.map((clip) => [
     clip.key,
-    clip.key === "idle" || clip.key === "idle_alt" ? idleCount : baseCount,
+    clip.key === "idle" || clip.key === "idle_alt" || clip.key === "swim_idle"
+      ? idleCount
+      : baseCount,
   ])));
 }
 
@@ -79,6 +85,7 @@ export function buildFramePrompt({
   const secondaryReferenceInstruction = buildSecondaryReferenceInstruction(referenceKind);
   const phaseInstruction = buildPhaseInstruction(clip.key, frameIndex, frameCount);
   const timelineInstruction = buildTimelineInstruction(clip.key, frameIndex, frameCount);
+  const swimming = clip.key.startsWith("swim");
 
   return [
     referenceInstruction,
@@ -91,9 +98,11 @@ export function buildFramePrompt({
     safeNotes ? `Creator notes: ${safeNotes}.` : "",
     STYLE_INSTRUCTIONS[style] ?? STYLE_INSTRUCTIONS.handheld,
     `The sprite must remain readable after reduction to a ${cellSize} by ${cellSize} pixel cell.`,
-    "Preserve the exact same character design in every frame: identical face, hair shape and length, clothing, colors, accessories, body proportions, outline thickness, pixel density, silhouette scale and ground baseline.",
+    `Preserve the exact same character design in every frame: identical face, hair shape and length, clothing, colors, accessories, body proportions, outline thickness, pixel density and silhouette scale${swimming ? ". Keep the torso center registered across this swimming clip" : " and ground baseline"}.`,
     "Use true pixel-art construction: crisp grid-aligned pixel clusters, hard edges, no anti-aliasing, no vector-smooth curves, no painterly texture and no high-resolution anime illustration style.",
-    "Show the complete body from the highest equipped feature to the soles of both feet. Center it upright with comfortable empty margin and a stable ground baseline.",
+    swimming
+      ? "Show the complete body from the highest equipped feature to the soles of both feet. Center the floating body around a stable torso anchor with comfortable empty margin. There is no ground baseline and no foot may touch a floor."
+      : "Show the complete body from the highest equipped feature to the soles of both feet. Center it upright with comfortable empty margin and a stable ground baseline.",
     `Fill EVERY background pixel with perfectly uniform solid ${chromaHex}, including all four corners and spaces between limbs.`,
     "No floor, shadow, glow, scenery, text, label, user interface, border, sprite sheet, extra character, duplicate body, alternate outfit or unequipped decorative object.",
   ].filter(Boolean).join("\n");
@@ -307,6 +316,43 @@ function buildClimbPhaseInstruction(frameIndex, frameCount) {
   return `Climb phase: ${phases[sector]}. Make the ladder gait readable with alternating hands and feet, bent knees and a small controlled vertical body rise. Keep all limbs connected, the torso centered on the same ladder axis and the viewing direction fixed. The ladder itself is environment and must not be drawn inside the sprite.`;
 }
 
+function buildSwimIdlePhaseInstruction(frameIndex, frameCount) {
+  const phase = (frameIndex - 1) / frameCount;
+  const sector = Math.round(phase * 8) % 8;
+  const phases = [
+    "neutral buoyant pose with the chest supported and hands beginning to sweep outward",
+    "hands press gently outward while the knees bend a little beneath the hips",
+    "left hand and right foot provide the clearer support beat while the opposite limbs recover",
+    "the body rises subtly as both hands return toward the torso",
+    "opposite buoyant beat with the hands beginning another outward sweep",
+    "hands press gently outward while the feet separate just enough to tread water",
+    "right hand and left foot provide the clearer support beat while the opposite limbs recover",
+    "the body settles subtly back into the first neutral pose",
+  ];
+  return `Swimming idle phase: ${phases[sector]}. Keep the avatar afloat in place with a calm, seamless tread-water cycle. Move arms and legs alternately, keep every limb connected and register the torso to the same center. No floor, walking, standing, duplicated limbs, bubbles or drawn water.`;
+}
+
+function buildSwimPhaseInstruction(frameIndex, frameCount, pitch) {
+  const phase = (frameIndex - 1) / frameCount;
+  const sector = Math.round(phase * 8) % 8;
+  const pitches = {
+    swim_up: "Angle the complete connected body upward about 30 degrees, with the head leading and feet trailing.",
+    swim_down: "Angle the complete connected body downward about 30 degrees, with the head leading and feet trailing.",
+    swim: "Keep the complete connected body approximately horizontal through the water.",
+  };
+  const phases = [
+    "left arm reaches forward while right arm finishes its backward pull; right leg extends as left knee begins to recover",
+    "left hand catches the water and the right arm starts recovering; the legs pass through a narrow alternating position",
+    "left arm pulls beneath the torso while right arm travels forward; left leg extends and right knee bends",
+    "left arm finishes its pull as the right hand approaches entry; the alternating kick reaches its opposite extreme",
+    "right arm reaches forward while left arm finishes its backward pull; left leg extends as right knee begins to recover",
+    "right hand catches the water and the left arm starts recovering; the legs pass through a narrow alternating position",
+    "right arm pulls beneath the torso while left arm travels forward; right leg extends and left knee bends",
+    "right arm finishes its pull as the left hand approaches entry; the alternating kick returns toward frame 1",
+  ];
+  return `Active swimming phase: ${phases[sector]}. ${pitches[pitch] ?? pitches.swim} Use a readable alternating stroke and kick, keep the torso registered, and keep every arm and leg connected. Do not create extra limbs, motion trails, standing feet, floor, bubbles or drawn water.`;
+}
+
 function buildTimelineInstruction(clipKey, frameIndex, frameCount) {
   if (clipKey === "jump") {
     return `This is frame ${frameIndex} of ${frameCount} in a one-shot ascent. Frames advance from takeoff to apex; frame ${frameCount} must transition into fall frame 1 and must not loop back to jump frame 1.`;
@@ -317,6 +363,12 @@ function buildTimelineInstruction(clipKey, frameIndex, frameCount) {
   if (clipKey === "climb") {
     return `This is frame ${frameIndex} of ${frameCount} in a seamless vertical ladder cycle. Hands and feet must alternate exactly once across the loop, and frame ${frameCount} must return naturally to frame 1.`;
   }
+  if (clipKey === "swim_idle") {
+    return `This is frame ${frameIndex} of ${frameCount} in a seamless stationary tread-water loop. The torso stays registered while alternating limbs return naturally from frame ${frameCount} to frame 1.`;
+  }
+  if (clipKey.startsWith("swim")) {
+    return `This is frame ${frameIndex} of ${frameCount} in a seamless active swimming stroke. Arms and legs alternate exactly once across the loop, and frame ${frameCount} must return naturally to frame 1 without changing body pitch.`;
+  }
   return `This is frame ${frameIndex} of ${frameCount} in a seamless loop; frame ${frameCount} must flow naturally back into frame 1.`;
 }
 
@@ -326,6 +378,8 @@ function buildPhaseInstruction(clipKey, frameIndex, frameCount) {
   if (clipKey === "jump") return buildJumpPhaseInstruction(frameIndex, frameCount);
   if (clipKey === "fall") return buildFallPhaseInstruction(frameIndex, frameCount);
   if (clipKey === "climb") return buildClimbPhaseInstruction(frameIndex, frameCount);
+  if (clipKey === "swim_idle") return buildSwimIdlePhaseInstruction(frameIndex, frameCount);
+  if (clipKey.startsWith("swim")) return buildSwimPhaseInstruction(frameIndex, frameCount, clipKey);
   return buildWalkPhaseInstruction(frameIndex, frameCount);
 }
 

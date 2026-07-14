@@ -62,7 +62,7 @@ const studioAvatars = new StudioAvatarService({
         seed: captureSettings.seed,
         notes: captureSettings.notes,
         reuseCaptureJobId: captureSource?.id,
-        recaptureClips: ["idle", "walk", "run", "jump", "fall", "climb"]
+        recaptureClips: ["idle", "walk", "run", "jump", "fall", "climb", "swim"]
           .filter((clip) => !availableClips.has(clip)),
       }, config),
       appearanceFingerprint,

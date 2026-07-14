@@ -159,14 +159,14 @@ test("captura los dos idles equipados, locomoción, salto, caída y escalada", a
   assert.equal(capture.source.jumpMotionSource, "equipped-roblox-animation");
   assert.equal(capture.source.fallMotionSource, "equipped-roblox-animation");
   assert.equal(capture.source.climbMotionSource, "equipped-roblox-animation");
-  assert.equal(calls.filter((call) => call.name === "capture_screenshot").length, 104);
+  assert.equal(calls.filter((call) => call.name === "capture_screenshot").length, 152);
   assert.equal(calls.filter((call) =>
     call.name === "eval_client_runtime" && call.args.code.includes("track.TimePosition")
-  ).length, 96);
-  assert.equal(capture.source.captureMethods.idle, "world-grid-batch");
-  assert.equal(capture.source.captureMethods.idle_alt, "world-grid-batch");
+  ).length, 144);
+  assert.equal(capture.source.captureMethods.idle, "sequential");
+  assert.equal(capture.source.captureMethods.idle_alt, "sequential");
   assert.equal(capture.source.captureMethods.walk, "sequential");
-  assert.equal(capture.source.screenshotCalls, 104);
+  assert.equal(capture.source.screenshotCalls, 152);
   assert.deepEqual(capture.source.batchFallbacks, []);
   const cameraSetup = calls.find((call) =>
     call.name === "eval_client_runtime" && call.args.code.includes("SpriteForgeCaptureCamera")
@@ -211,6 +211,78 @@ test("recaptura únicamente los clips solicitados", async () => {
   assert.equal(capture.climbImages.size, 16);
   assert.deepEqual(capture.source.recapturedClips, ["climb"]);
   assert.equal(calls.filter((call) => call.name === "capture_screenshot").length, 16);
+});
+
+test("captura flotación y nado nivel/arriba/abajo con una sola selección", async () => {
+  const screenshot = await sharp({
+    create: { width: 24, height: 16, channels: 3, background: "#ff00ff" },
+  }).png().toBuffer();
+  const calls = [];
+  const asText = (value) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
+  const client = {
+    diagnose: async () => ({ ok: true, place: { name: "Pixel avatar", id: 1, running: true } }),
+    async callTool(name, args) {
+      calls.push({ name, args });
+      if (name === "solo_playtest") return asText({ running: true });
+      if (name === "capture_screenshot") {
+        return { content: [{ type: "image", mimeType: "image/png", data: screenshot.toString("base64") }] };
+      }
+      if (name === "eval_server_runtime" && args.code.includes("GetHumanoidDescriptionFromUserIdAsync")) {
+        return asText({ result: JSON.stringify({
+          animations: {},
+          resolvedAnimations: {
+            SwimAnimation: "rbxassetid://700",
+            SwimIdleAnimation: "rbxassetid://701",
+          },
+        }) });
+      }
+      if (name === "eval_server_runtime" && args.code.includes("SpriteForgeResolvedSwim")) {
+        return asText({ result: JSON.stringify({ ready: true, length: 1 }) });
+      }
+      return asText({ result: true });
+    },
+  };
+  const service = new StudioCaptureService({ client, format: "png", batchIdle: true });
+  const capture = await service.captureTurntable({
+    userId: 42,
+    renderResolution: 16,
+    chroma: { hex: "#FF00FF" },
+    framesPerAnimation: 2,
+    frameCounts: { swim_idle: 2, swim: 2, swim_up: 2, swim_down: 2 },
+    clips: ["swim"],
+  });
+
+  assert.equal(capture.images.size, 0);
+  assert.equal(capture.swim_idleImages.size, 16);
+  assert.equal(capture.swimImages.size, 16);
+  assert.equal(capture.swim_upImages.size, 16);
+  assert.equal(capture.swim_downImages.size, 16);
+  assert.ok(capture.swim_upImages.has("down_left_swim_up_2"));
+  assert.equal(capture.source.capturedSwimIdleFrames, 16);
+  assert.equal(capture.source.capturedSwimFrames, 16);
+  assert.equal(capture.source.capturedSwimUpFrames, 16);
+  assert.equal(capture.source.capturedSwimDownFrames, 16);
+  assert.equal(capture.source.screenshotCalls, 32);
+  assert.equal(capture.source.captureMethods.swim_idle, "world-grid-batch");
+  assert.equal(capture.source.captureMethods.swim_up, "world-grid-batch");
+  const swimUpBatch = calls.find((call) =>
+    call.name === "eval_client_runtime"
+      && call.args.code.includes("SpriteForgeCaptureSwimUpTrack")
+      && call.args.code.includes("rig:Clone")
+  );
+  const swimDownBatch = calls.find((call) =>
+    call.name === "eval_client_runtime"
+      && call.args.code.includes("SpriteForgeCaptureSwimDownTrack")
+      && call.args.code.includes("rig:Clone")
+  );
+  assert.match(swimUpBatch.args.code, /math\.rad\(-60\)/);
+  assert.match(swimDownBatch.args.code, /math\.rad\(-120\)/);
+  const swimLevelBatch = calls.find((call) =>
+    call.name === "eval_client_runtime"
+      && call.args.code.includes("SpriteForgeCaptureSwimTrack")
+      && call.args.code.includes("rig:Clone")
+  );
+  assert.match(swimLevelBatch.args.code, /math\.rad\(-90\)/);
 });
 
 test("vuelve al capturador secuencial si Studio rechaza el lote", async () => {

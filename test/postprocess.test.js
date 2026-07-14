@@ -85,14 +85,14 @@ test("ensambla la hoja, preview y atlas", async () => {
   const sheet = await assembleSpriteSheet(frames, { cellSize: 48, paletteColors: 32 });
   const info = await sharp(sheet).metadata();
   assert.equal(info.width, 192);
-  assert.equal(info.height, 2688);
+  assert.equal(info.height, 4224);
   const preview = await createPixelPreview(sheet, 4);
   const previewInfo = await sharp(preview).metadata();
   assert.equal(previewInfo.width, 768);
-  assert.equal(previewInfo.height, 10752);
+  assert.equal(previewInfo.height, 16896);
   const atlas = createAtlasData({ username: "YukiManju", cellSize: 48, frames });
-  assert.equal(Object.keys(atlas.frames).length, 224);
-  assert.equal(atlas.meta.size.h, 2688);
+  assert.equal(Object.keys(atlas.frames).length, 352);
+  assert.equal(atlas.meta.size.h, 4224);
   assert.equal(atlas.meta.directions.length, 8);
   assert.equal(atlas.frames["down_idle_1.png"].duration, 1000);
   assert.equal(atlas.frames["down_idle_alt_1.png"].duration, 1000);
@@ -138,13 +138,19 @@ test("ensambla la hoja, preview y atlas", async () => {
     "down_idle_alt_3.png",
     "down_idle_alt_4.png",
   ]);
+  assert.deepEqual(atlas.animations.down_swim, [
+    "down_swim_1.png",
+    "down_swim_2.png",
+    "down_swim_3.png",
+    "down_swim_4.png",
+  ]);
 });
 
 test("el atlas conserva cuatro segundos de idle al duplicarlo a 16 frames", () => {
   const plan = getFramePlan({ framesPerAnimation: 8, idleFramesPerAnimation: 16 });
   const frames = plan.map((frame) => ({ ...frame, buffer: Buffer.alloc(0) }));
   const atlas = createAtlasData({ username: "YukiManju", cellSize: 128, frames });
-  assert.equal(Object.keys(atlas.frames).length, 576);
+  assert.equal(Object.keys(atlas.frames).length, 896);
   assert.equal(atlas.animations.down_idle.length, 16);
   assert.equal(atlas.animations.down_walk.length, 8);
   assert.equal(atlas.frames["down_idle_1.png"].duration, 250);
@@ -158,6 +164,10 @@ test("el atlas conserva cuatro segundos de idle al duplicarlo a 16 frames", () =
     fall: 8,
     climb: 8,
     idle_alt: 16,
+    swim_idle: 16,
+    swim: 8,
+    swim_up: 8,
+    swim_down: 8,
   });
 });
 

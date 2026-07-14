@@ -159,21 +159,36 @@ envelope.Parent = folder
 return HttpService:JSONEncode({ status = "loading", userId = ${userId}, chunks = ${chunks.length} })`,
     });
 
-    for (let index = 0; index < chunks.length; index += 1) {
-      const chunkLiteral = JSON.stringify(chunks[index]);
-      const chunkName = JSON.stringify(`Chunk${String(index + 1).padStart(3, "0")}`);
+    // El bridge tiene un costo fijo considerable por cada llamada. Enviar
+    // micro-lotes de cuatro bloques conserva tamaños de request moderados y
+    // reduce la entrega de un atlas grande de decenas de rondas a unas pocas.
+    const chunkBatchSize = 4;
+    for (let batchStart = 0; batchStart < chunks.length; batchStart += chunkBatchSize) {
+      const batchEntries = chunks
+        .slice(batchStart, batchStart + chunkBatchSize)
+        .map((value, offset) => ({
+          name: `Chunk${String(batchStart + offset + 1).padStart(3, "0")}`,
+          value,
+        }));
+      const batchLiteral = JSON.stringify(JSON.stringify(batchEntries));
       await this.client.callTool("eval_server_runtime", {
         code: `
+local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local runtime = ReplicatedStorage:FindFirstChild("SpriteForgeRuntime")
 local root = runtime and runtime:FindFirstChild("DynamicAtlases")
 local folder = root and root:FindFirstChild(${folderName})
 assert(folder and folder:GetAttribute("JobId") == ${jobId}, "SpriteForge atlas transfer expired")
-local value = Instance.new("StringValue")
-value.Name = ${chunkName}
-value.Value = ${chunkLiteral}
-value.Parent = folder
-return #value.Value`,
+local entries = HttpService:JSONDecode(${batchLiteral})
+local bytes = 0
+for _, entry in ipairs(entries) do
+    local value = Instance.new("StringValue")
+    value.Name = entry.name
+    value.Value = entry.value
+    value.Parent = folder
+    bytes += #value.Value
+end
+return bytes`,
       });
     }
 

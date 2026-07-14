@@ -18,7 +18,7 @@
         </a>
         <div class="topbar-copy">
           <span>Roblox character lab</span>
-          <span class="version-tag">IDLE + WALK + RUN + JUMP + FALL + CLIMB</span>
+          <span class="version-tag">IDLE + WALK + RUN + JUMP + FALL + CLIMB + SWIM</span>
         </div>
         <div class="health-actions">
           <div id="healthChip" class="status-chip pending">
@@ -34,7 +34,7 @@
           <p class="eyebrow">LOCAL PIPELINE / CANONICAL SPRITE / POSE MOTION</p>
           <h1>Del avatar al juego.</h1>
         </div>
-          <p>Genera idle, caminata, carrera, salto, caída y escalada con continuidad real en ocho direcciones, inspecciona cada píxel y prueba el movimiento antes de exportar.</p>
+          <p>Genera idle, caminata, carrera, salto, caída, escalada y nado 3D con continuidad real en ocho direcciones, inspecciona cada píxel y prueba el movimiento antes de exportar.</p>
       </section>
 
       <section id="healthPanel" class="notice hidden" role="status"></section>
@@ -57,7 +57,7 @@
           </section>
 
           <section class="setup-block config-block">
-            <div class="block-title"><span>02</span><div><h2>Generación</h2><p id="generationSummary">idle 16 · otros 8 · 8 direcciones · 576 frames</p></div></div>
+            <div class="block-title"><span>02</span><div><h2>Generación</h2><p id="generationSummary">idle 16 · otros 8 · 8 direcciones · 896 frames</p></div></div>
             <form id="generationForm" class="settings-grid">
               <label>Tamaño final<select id="cellSize"><option value="48">48 × 48</option><option value="64" selected>64 × 64</option><option value="96">96 × 96</option><option value="128">128 × 128</option></select></label>
               <label>Resolución IA<select id="renderResolution"><option value="512" selected>512 · rápida</option><option value="768">768 · detalle</option><option value="1024">1024 · máxima</option></select></label>
@@ -77,12 +77,13 @@
                   <label><input type="checkbox" value="jump" data-recapture-clip />Jump</label>
                   <label><input type="checkbox" value="fall" data-recapture-clip />Fall</label>
                   <label><input type="checkbox" value="climb" data-recapture-clip checked />Climb</label>
+                  <label><input type="checkbox" value="swim" data-recapture-clip checked />Swim + flotación</label>
                 </div>
               </fieldset>
-              <p class="local-note full-width"><span></span>Idle principal y alternativo usan 16 frames durante 4 segundos. Los demás clips conservan sus 8 capturas y solo se recapturan cuando los marcas.</p>
+              <p class="local-note full-width"><span></span>Idle, idle alternativo y flotación usan 16 frames. Nado captura nivel, ascenso y descenso; los demás clips conservan 8.</p>
               <p id="detailRecommendation" class="detail-recommendation full-width hidden"></p>
               <div class="full-width action-row">
-                <button id="generateButton" class="button primary" type="submit" disabled><span>Generar set</span><small id="frameTotalLabel">576 frames</small></button>
+                <button id="generateButton" class="button primary" type="submit" disabled><span>Generar set</span><small id="frameTotalLabel">896 frames</small></button>
                 <button id="cancelButton" class="button danger hidden" type="button">Cancelar</button>
               </div>
             </form>
@@ -92,19 +93,19 @@
         <section class="studio-panel">
           <div class="studio-heading">
             <div><p class="eyebrow">03 / PLAYGROUND</p><h2>Vista previa</h2></div>
-            <span class="keyboard-hint"><kbd>WASD</kbd> · <kbd>Shift</kbd> correr · <kbd>Espacio</kbd> saltar · <kbd>E</kbd> escalar</span>
+            <span class="keyboard-hint"><kbd>WASD</kbd> · <kbd>Shift</kbd> correr · <kbd>Espacio</kbd> saltar/subir · <kbd>Ctrl</kbd> bajar · <kbd>E</kbd> escalar</span>
           </div>
 
           <div id="emptyOutput" class="empty-output">
             <div class="empty-orbit" aria-hidden="true"><span>↖</span><span>↑</span><span>↗</span><span>←</span><i></i><span>→</span><span>↙</span><span>↓</span><span>↘</span></div>
             <strong>Tu personaje vivirá aquí</strong>
-            <p>Genera el set para caminar, correr, saltar y escalar en ocho direcciones y revisar las animaciones en contexto.</p>
+            <p>Genera el set para caminar, correr, saltar, escalar y nadar en ocho direcciones y revisar las animaciones en contexto.</p>
           </div>
 
           <div id="progressView" class="progress-view hidden">
             <div class="progress-header"><div><span>GENERANDO ATLAS</span><strong id="progressMessage">Preparando…</strong></div><b id="progressPercent">0%</b></div>
             <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
-            <div class="progress-sub"><p id="frameCounter">0 / 384 frames</p><span>Idle + locomoción + aire + escalada auténticos de Roblox</span></div>
+            <div class="progress-sub"><p id="frameCounter">0 / 896 frames</p><span>Idle + locomoción + aire + escalada + nado auténticos de Roblox</span></div>
             <div id="frameGrid" class="frame-grid" aria-label="Progreso de frames"></div>
           </div>
 
@@ -112,6 +113,9 @@
             <div id="liveStage" class="live-stage" tabindex="0" aria-label="Escenario interactivo para probar el sprite">
               <div class="stage-sky" aria-hidden="true"><i></i><i></i><i></i></div>
               <div class="stage-ground" aria-hidden="true"></div>
+              <div id="pixelPool" class="pixel-pool" aria-label="Piscina pixel art interactiva">
+                <i></i><span>SWIM<br /><b>WASD · Espacio/Ctrl</b></span>
+              </div>
               <div id="pixelLadder" class="pixel-ladder" aria-label="Escalera pixel art interactiva">
                 <i class="ladder-rail left"></i><i class="ladder-rungs"></i><i class="ladder-rail right"></i>
                 <span>CLIMB<br /><b>E + W/S</b></span>
@@ -132,12 +136,13 @@
                 <button id="resetPlayer" class="button ghost" type="button">Centrar</button>
                 <button id="runToggle" class="button ghost run-toggle" type="button" aria-pressed="false">Correr</button>
                 <button id="climbToggle" class="button ghost climb-toggle" type="button" aria-pressed="false">Escalar</button>
+                <button id="swimToggle" class="button ghost swim-toggle" type="button" aria-pressed="false">Nadar</button>
                 <label>FPS <input id="previewSpeed" type="range" min="4" max="14" value="8" /><output id="speedValue">8</output></label>
               </div>
             </div>
 
             <details class="sheet-drawer">
-              <summary><span><b>HOJA COMPLETA</b><small id="sheetSummary">8 × 48 · 384 frames</small></span><i>Ver atlas</i></summary>
+              <summary><span><b>HOJA COMPLETA</b><small id="sheetSummary">8 direcciones · 896 frames</small></span><i>Ver atlas</i></summary>
               <div class="sheet-inspector"><div class="checkerboard"><img id="sheetPreview" alt="Hoja de sprites generada" /></div><dl id="resultMeta" class="result-meta"></dl></div>
             </details>
 
