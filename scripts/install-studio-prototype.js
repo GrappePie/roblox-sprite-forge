@@ -230,13 +230,14 @@ end
 
 local spawn = Workspace:FindFirstChildWhichIsA("SpawnLocation", true)
 local groundY = spawn and (spawn.Position.Y + spawn.Size.Y / 2) or 0
+local waterSize = Vector3.new(28, 8, 26)
 local origin = spawn
-    and Vector3.new(spawn.Position.X - 18, groundY + 3.2, spawn.Position.Z)
-    or Vector3.new(-18, groundY + 3.2, 0)
-local waterSize = Vector3.new(16, 6, 14)
+    and Vector3.new(spawn.Position.X - 20, groundY + waterSize.Y / 2, spawn.Position.Z + 20)
+    or Vector3.new(-20, groundY + waterSize.Y / 2, 20)
 local model = Instance.new("Model")
 model.Name = "SpriteForgePixelPool"
 model:SetAttribute("SpriteForgeSwimTest", true)
+model:SetAttribute("OpenWater", true)
 model:SetAttribute("WaterCenter", origin)
 model:SetAttribute("WaterSize", waterSize)
 model.Parent = Workspace
@@ -262,22 +263,34 @@ end
 local dark = Color3.fromRGB(28, 49, 59)
 local tile = Color3.fromRGB(118, 173, 188)
 local accent = Color3.fromRGB(126, 229, 255)
-makePart("Floor", Vector3.new(18, 0.8, 16), origin + Vector3.new(0, -3.4, 0), dark)
-makePart("NorthWall", Vector3.new(18, 7.2, 0.8), origin + Vector3.new(0, 0, -7.4), tile)
-makePart("SouthWall", Vector3.new(18, 7.2, 0.8), origin + Vector3.new(0, 0, 7.4), tile)
-makePart("WestWall", Vector3.new(0.8, 7.2, 14), origin + Vector3.new(-8.4, 0, 0), tile)
-makePart("EastWall", Vector3.new(0.8, 7.2, 14), origin + Vector3.new(8.4, 0, 0), tile)
-for step = 0, 3 do
+makePart(
+    "PoolBed",
+    Vector3.new(waterSize.X + 2, 0.8, waterSize.Z + 2),
+    origin + Vector3.new(0, -waterSize.Y / 2 - 0.4, 0),
+    dark
+)
+local entryX = origin.X + waterSize.X / 2 - 0.9
+local entryZ = origin.Z - waterSize.Z / 2 + 1.6
+for step = 0, 7 do
     makePart(
         string.format("EntryStep%02d", step + 1),
-        Vector3.new(3.5, 0.6, 1.4),
-        origin + Vector3.new(0, 3.1 - step * 0.75, 7.7 - step * 1.1),
+        Vector3.new(2.2, 0.6, 3.2),
+        Vector3.new(
+            entryX + step * 1.35,
+            origin.Y + waterSize.Y / 2 - 0.3 - step * 0.95,
+            entryZ
+        ),
         if step % 2 == 0 then accent else tile
     )
 end
 Terrain:FillBlock(CFrame.new(origin), waterSize, Enum.Material.Water)
 
-local signAnchor = makePart("SignAnchor", Vector3.new(0.2, 0.2, 0.2), origin + Vector3.new(0, 5.2, -7.8), accent)
+local signAnchor = makePart(
+    "SignAnchor",
+    Vector3.new(0.2, 0.2, 0.2),
+    origin + Vector3.new(0, waterSize.Y / 2 + 2, -waterSize.Z / 2 + 1),
+    accent
+)
 signAnchor.Transparency = 1
 signAnchor.CanCollide = false
 local sign = Instance.new("BillboardGui")
@@ -295,13 +308,15 @@ label.BorderColor3 = tile
 label.TextColor3 = accent
 label.Font = Enum.Font.Code
 label.TextScaled = true
-label.Text = "SWIM TEST  •  WASD / SPACE / CTRL"
+label.Text = "OPEN WATER  •  WASD / SPACE / CTRL"
 label.Parent = sign
 
 return HttpService:JSONEncode({
     name = model.Name,
     center = { x = origin.X, y = origin.Y, z = origin.Z },
     size = { x = waterSize.X, y = waterSize.Y, z = waterSize.Z },
+    openWater = true,
+    walls = 0,
     material = "Water",
 })`,
 }));
