@@ -48,6 +48,7 @@ import { createZip } from "./archive.js";
 
 const STUDIO_CLIP_KEYS = Object.freeze(["idle", "walk", "run", "jump", "fall", "climb", "swim"]);
 const STUDIO_CAPTURED_ANIMATION_CLIP_KEYS = Object.freeze(CLIPS.map((clip) => clip.key));
+const FACE_DETAIL_DIRECTIONS = new Set(["down", "down_left", "left", "right", "down_right"]);
 
 function captureSelectionForClip(clip) {
   if (clip === "idle" || clip === "idle_alt") return "idle";
@@ -562,7 +563,7 @@ export class JobManager {
             cell = await renderStudioSpriteCell(
               transparentStudioReference,
               studioCellTransform,
-              job.input,
+              directionalRenderOptions(job.input, frame.direction.key),
             );
             directionMasterCell = cell;
             directionMasters.set(direction, cell);
@@ -600,7 +601,7 @@ export class JobManager {
               cell = await renderStudioSpriteCell(
                 transparentMotionReference,
                 frame.clip.key.startsWith("swim") ? studioSwimCellTransform : studioCellTransform,
-                job.input,
+                directionalRenderOptions(job.input, frame.direction.key),
               );
               if (!frame.clip.key.startsWith("swim") && !(await hasVerticalBodyContinuity(cell))) {
                 throw new AppError(`La pose real ${frame.key} perdió la continuidad entre torso y pies.`, {
@@ -967,7 +968,10 @@ export class JobManager {
 
   async processAndSaveFrame({ job, frame, raw, chroma, framesDirectory, rawDirectory }) {
     const transparent = await removeChromaBackground(raw, chroma);
-    const cell = await renderSpriteCell(transparent, job.input);
+    const cell = await renderSpriteCell(
+      transparent,
+      directionalRenderOptions(job.input, frame.direction.key),
+    );
     const writes = [fs.writeFile(path.join(framesDirectory, `${frame.key}.png`), cell)];
     if (this.keepRawFrames) writes.push(fs.writeFile(path.join(rawDirectory, `${frame.key}.png`), raw));
     await Promise.all(writes);
@@ -1081,6 +1085,14 @@ export class JobManager {
       this.jobs.delete(id);
     }
   }
+}
+
+function directionalRenderOptions(input, direction) {
+  return {
+    ...input,
+    preserveFaceDetails: FACE_DETAIL_DIRECTIONS.has(direction),
+    repairHeadTorso: direction === "up_left" || direction === "up_right",
+  };
 }
 
 async function replaceFileWithRetry(temporary, destination) {

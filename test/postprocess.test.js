@@ -11,6 +11,8 @@ import {
   createStudioCellTransform,
   measureSpriteFootAnchor,
   measureSpriteTorsoAnchor,
+  preserveSmallFaceDetails,
+  repairHeadTorsoConnection,
   removeIsolatedAlphaPixels,
   removeChromaBackground,
   renderSpriteCell,
@@ -87,6 +89,48 @@ test("elimina el derrame magenta del antialias antes de cuantizar", async () => 
     const magentaExcess = Math.min(data[offset], data[offset + 2]) - data[offset + 1];
     assert.ok(magentaExcess <= 18, `quedó spill magenta en ${offset / 4}: ${magentaExcess}`);
   }
+});
+
+test("conserva los acentos diminutos del rostro sin colorear el resto del cuerpo", async () => {
+  const width = 32;
+  const height = 32;
+  const source = Buffer.alloc(width * height * 4);
+  const quantized = Buffer.alloc(width * height * 4);
+  for (let y = 3; y <= 29; y += 1) {
+    for (let x = 8; x <= 23; x += 1) {
+      const offset = (y * width + x) * 4;
+      source.set([180, 180, 182, 255], offset);
+      quantized.set([180, 180, 182, 255], offset);
+    }
+  }
+  for (const [x, y] of [[14, 10], [17, 10], [15, 25]]) {
+    source.set([55, 165, 220, 255], (y * width + x) * 4);
+  }
+  const corrected = await preserveSmallFaceDetails(
+    await sharp(source, { raw: { width, height, channels: 4 } }).png().toBuffer(),
+    await sharp(quantized, { raw: { width, height, channels: 4 } }).png().toBuffer(),
+  );
+  const data = await sharp(corrected).ensureAlpha().raw().toBuffer();
+  assert.deepEqual([...data.subarray((10 * width + 14) * 4, (10 * width + 14) * 4 + 3)], [55, 165, 220]);
+  assert.deepEqual([...data.subarray((25 * width + 15) * 4, (25 * width + 15) * 4 + 3)], [180, 180, 182]);
+});
+
+test("cierra una separación mínima entre una cabeza grande y el torso", async () => {
+  const width = 32;
+  const height = 32;
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 2; y <= 10; y += 1) {
+    for (let x = 10; x <= 20; x += 1) pixels.set([80, 82, 86, 255], (y * width + x) * 4);
+  }
+  for (let y = 12; y <= 29; y += 1) {
+    for (let x = 12; x <= 22; x += 1) pixels.set([120, 122, 126, 255], (y * width + x) * 4);
+  }
+  const repaired = await repairHeadTorsoConnection(
+    await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer(),
+  );
+  const data = await sharp(repaired).ensureAlpha().raw().toBuffer();
+  const bridgePixels = Array.from({ length: width }, (_, x) => data[(11 * width + x) * 4 + 3]);
+  assert.ok(bridgePixels.some((alpha) => alpha >= 220));
 });
 
 test("elimina un píxel aislado sin borrar detalles conectados en diagonal", async () => {

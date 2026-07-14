@@ -215,7 +215,12 @@ export async function removeChromaBackground(input, chroma, { trim = true } = {}
 }
 
 /** Reduce un personaje transparente a una celda fija y alinea los pies. */
-export async function renderSpriteCell(input, { cellSize, paletteColors }) {
+export async function renderSpriteCell(input, {
+  cellSize,
+  paletteColors,
+  preserveFaceDetails = false,
+  repairHeadTorso = false,
+}) {
   const size = clampInteger(cellSize, 16, 512, 64);
   const colors = clampInteger(paletteColors, 8, 256, 64);
   const paddingX = Math.max(2, Math.round(size * 0.055));
@@ -237,7 +242,7 @@ export async function renderSpriteCell(input, { cellSize, paletteColors }) {
     .toBuffer();
   const left = Math.floor((size - targetWidth) / 2);
   const top = Math.max(paddingTop, size - paddingBottom - targetHeight);
-  const centered = await sharp({
+  const centeredSource = await sharp({
     create: {
       width: size,
       height: size,
@@ -246,10 +251,26 @@ export async function renderSpriteCell(input, { cellSize, paletteColors }) {
     },
   })
     .composite([{ input: resized, left, top }])
+    .png({ palette: false, compressionLevel: 9 })
+    .toBuffer();
+  const centeredQuantized = await sharp(centeredSource)
     .png({ palette: true, colours: colors, dither: 0, compressionLevel: 9 })
     .toBuffer();
-  const aligned = await alignSpriteCell(centered, { cellSize: size, paletteColors: colors });
-  return removeIsolatedAlphaPixels(aligned);
+  const [alignedSource, alignedQuantized] = await Promise.all([
+    preserveFaceDetails
+      ? alignSpriteCell(centeredSource, {
+          cellSize: size,
+          paletteColors: colors,
+          quantize: false,
+        })
+      : null,
+    alignSpriteCell(centeredQuantized, { cellSize: size, paletteColors: colors }),
+  ]);
+  const detailed = alignedSource
+    ? await preserveSmallFaceDetails(alignedSource, alignedQuantized)
+    : alignedQuantized;
+  const cleaned = await removeIsolatedAlphaPixels(detailed);
+  return repairHeadTorso ? repairHeadTorsoConnection(cleaned) : cleaned;
 }
 
 /**
@@ -324,7 +345,12 @@ async function createRegisteredStudioTransform(reference, { cellSize, paletteCol
   };
 }
 
-export async function renderStudioSpriteCell(input, transform, { cellSize, paletteColors } = {}) {
+export async function renderStudioSpriteCell(input, transform, {
+  cellSize,
+  paletteColors,
+  preserveFaceDetails = false,
+  repairHeadTorso = false,
+} = {}) {
   const metadata = await sharp(input).metadata();
   const size = clampInteger(cellSize, 16, 512, transform?.outputSize ?? 64);
   const colors = clampInteger(paletteColors, 8, 256, transform?.paletteColors ?? 64);
@@ -349,7 +375,7 @@ export async function renderStudioSpriteCell(input, transform, { cellSize, palet
     0,
     transform.windowTop + transform.windowHeight - transform.sourceHeight,
   );
-  const registered = await sharp(input)
+  const registeredSource = await sharp(input)
     .ensureAlpha()
     .extend({
       left: extendLeft,
@@ -365,9 +391,135 @@ export async function renderStudioSpriteCell(input, transform, { cellSize, palet
       height: transform.windowHeight,
     })
     .resize(size, size, { fit: "fill", kernel: sharp.kernel.nearest })
+    .png({ palette: false, compressionLevel: 9 })
+    .toBuffer();
+  const registered = await sharp(registeredSource)
     .png({ palette: true, colours: colors, dither: 0, compressionLevel: 9 })
     .toBuffer();
-  return removeIsolatedAlphaPixels(registered);
+  const detailed = preserveFaceDetails
+    ? await preserveSmallFaceDetails(registeredSource, registered)
+    : registered;
+  const cleaned = await removeIsolatedAlphaPixels(detailed);
+  return repairHeadTorso ? repairHeadTorsoConnection(cleaned) : cleaned;
+}
+
+/**
+ * Conserva acentos diminutos y saturados del tercio facial (ojos, iris o
+ * maquillaje) que una paleta global suele descartar por ocupar pocos píxeles.
+ * No inventa rasgos: sólo recupera colores presentes en la captura reducida.
+ */
+export async function preserveSmallFaceDetails(source, quantized) {
+  const [original, output] = await Promise.all([
+    sharp(source).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+    sharp(quantized).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+  ]);
+  if (original.info.width !== output.info.width || original.info.height !== output.info.height) {
+    return Buffer.from(quantized);
+  }
+  const anchor = analyzeFootAnchor(
+    original.data,
+    original.info.width,
+    original.info.height,
+  );
+  if (!anchor) return Buffer.from(quantized);
+
+  const { bounds } = anchor;
+  const subjectWidth = bounds.right - bounds.left + 1;
+  const subjectHeight = bounds.bottom - bounds.top + 1;
+  const centerX = (bounds.left + bounds.right) / 2;
+  const left = Math.max(bounds.left, Math.floor(centerX - subjectWidth * 0.34));
+  const right = Math.min(bounds.right, Math.ceil(centerX + subjectWidth * 0.34));
+  const top = Math.round(bounds.top + subjectHeight * 0.10);
+  const bottom = Math.round(bounds.top + subjectHeight * 0.40);
+
+  let restored = 0;
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) {
+      const offset = (y * original.info.width + x) * 4;
+      if (original.data[offset + 3] <= 30 || output.data[offset + 3] <= 30) continue;
+      const color = [original.data[offset], original.data[offset + 1], original.data[offset + 2]];
+      if (!isStrongAccent(color)) continue;
+      const current = [output.data[offset], output.data[offset + 1], output.data[offset + 2]];
+      if (squaredDistance(color, current) < 36 ** 2) continue;
+      output.data[offset] = color[0];
+      output.data[offset + 1] = color[1];
+      output.data[offset + 2] = color[2];
+      restored += 1;
+    }
+  }
+  if (!restored) return Buffer.from(quantized);
+  return sharp(output.data, {
+    raw: { width: output.info.width, height: output.info.height, channels: 4 },
+  }).png({ palette: false, compressionLevel: 9 }).toBuffer();
+}
+
+/**
+ * Cierra únicamente separaciones de uno o dos píxeles entre dos componentes
+ * grandes con anatomía de cabeza y cuerpo. Accesorios flotantes pequeños no
+ * cumplen el umbral y permanecen separados.
+ */
+export async function repairHeadTorsoConnection(input, { maximumGap = 3 } = {}) {
+  const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { components, labels } = findAlphaComponents(data, info.width, info.height, 30);
+  if (components.length < 2) return Buffer.from(input);
+  const opaquePixels = components.reduce((sum, component) => sum + component.size, 0);
+  const overallTop = Math.min(...components.map((component) => component.top));
+  const overallBottom = Math.max(...components.map((component) => component.bottom));
+  const subjectHeight = overallBottom - overallTop + 1;
+  const minimumLargeComponent = Math.max(20, Math.round(opaquePixels * 0.14));
+  const body = components
+    .filter((component) => (
+      component.size >= minimumLargeComponent
+      && component.bottom >= overallTop + subjectHeight * 0.72
+    ))
+    .sort((left, right) => right.size - left.size || right.bottom - left.bottom)[0];
+  if (!body) return Buffer.from(input);
+  const head = components
+    .filter((component) => (
+      component.label !== body.label
+      && component.size >= minimumLargeComponent
+      && component.top < body.top
+      && component.bottom >= body.top - maximumGap
+    ))
+    .sort((left, right) => right.size - left.size)[0];
+  if (!head) return Buffer.from(input);
+
+  let bridge = null;
+  for (const pixel of head.boundary) {
+    for (let dy = -maximumGap; dy <= maximumGap; dy += 1) {
+      for (let dx = -maximumGap; dx <= maximumGap; dx += 1) {
+        const distance = Math.max(Math.abs(dx), Math.abs(dy));
+        if (!distance || distance > maximumGap) continue;
+        const x = pixel.x + dx;
+        const y = pixel.y + dy;
+        if (x < 0 || x >= info.width || y < 0 || y >= info.height) continue;
+        if (labels[y * info.width + x] !== body.label) continue;
+        if (!bridge || distance < bridge.distance) {
+          bridge = { distance, head: pixel, body: { x, y } };
+        }
+      }
+    }
+  }
+  if (!bridge || bridge.distance < 2) return Buffer.from(input);
+
+  const bodyOffset = (bridge.body.y * info.width + bridge.body.x) * 4;
+  const steps = Math.max(
+    Math.abs(bridge.body.x - bridge.head.x),
+    Math.abs(bridge.body.y - bridge.head.y),
+  );
+  for (let step = 1; step < steps; step += 1) {
+    const x = Math.round(bridge.head.x + ((bridge.body.x - bridge.head.x) * step) / steps);
+    const y = Math.round(bridge.head.y + ((bridge.body.y - bridge.head.y) * step) / steps);
+    const offset = (y * info.width + x) * 4;
+    if (data[offset + 3] >= 30) continue;
+    data[offset] = data[bodyOffset];
+    data[offset + 1] = data[bodyOffset + 1];
+    data[offset + 2] = data[bodyOffset + 2];
+    data[offset + 3] = Math.max(220, data[bodyOffset + 3]);
+  }
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png({ palette: false, compressionLevel: 9 })
+    .toBuffer();
 }
 
 /** Elimina únicamente píxeles alfa completamente solos; conserva grupos y diagonales finas. */
@@ -404,7 +556,7 @@ export async function removeIsolatedAlphaPixels(input) {
  * Alinea una celda por las piernas y los pies, no por accesorios asimétricos.
  * Así todas las direcciones comparten el mismo pivote visual en el juego.
  */
-export async function alignSpriteCell(input, { cellSize, paletteColors } = {}) {
+export async function alignSpriteCell(input, { cellSize, paletteColors, quantize = true } = {}) {
   const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const size = clampInteger(cellSize, 16, 512, info.width);
   const colors = clampInteger(paletteColors, 8, 256, 64);
@@ -435,9 +587,10 @@ export async function alignSpriteCell(input, { cellSize, paletteColors } = {}) {
       data.copy(output, destination, source, source + 4);
     }
   }
-  return sharp(output, { raw: { width: size, height: size, channels: 4 } })
-    .png({ palette: true, colours: colors, dither: 0, compressionLevel: 9 })
-    .toBuffer();
+  const pipeline = sharp(output, { raw: { width: size, height: size, channels: 4 } });
+  return quantize
+    ? pipeline.png({ palette: true, colours: colors, dither: 0, compressionLevel: 9 }).toBuffer()
+    : pipeline.png({ palette: false, compressionLevel: 9 }).toBuffer();
 }
 
 export async function measureSpriteFootAnchor(input) {
@@ -826,6 +979,70 @@ function countOpaquePixels(data) {
 
 function squaredDistance(a, b) {
   return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+}
+
+function isStrongAccent([red, green, blue]) {
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  return maximum >= 120 && maximum - minimum >= 70;
+}
+
+function findAlphaComponents(data, width, height, threshold) {
+  const labels = new Int32Array(width * height);
+  const components = [];
+  const queue = new Int32Array(width * height);
+  let nextLabel = 1;
+  for (let start = 0; start < labels.length; start += 1) {
+    if (labels[start] || data[start * 4 + 3] < threshold) continue;
+    const component = {
+      label: nextLabel,
+      size: 0,
+      left: width,
+      right: -1,
+      top: height,
+      bottom: -1,
+      boundary: [],
+    };
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = start;
+    labels[start] = nextLabel;
+    while (head < tail) {
+      const pixel = queue[head++];
+      const x = pixel % width;
+      const y = Math.floor(pixel / width);
+      component.size += 1;
+      component.left = Math.min(component.left, x);
+      component.right = Math.max(component.right, x);
+      component.top = Math.min(component.top, y);
+      component.bottom = Math.max(component.bottom, y);
+      let boundary = false;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (!dx && !dy) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+            boundary = true;
+            continue;
+          }
+          const neighbor = ny * width + nx;
+          if (data[neighbor * 4 + 3] < threshold) {
+            boundary = true;
+            continue;
+          }
+          if (!labels[neighbor]) {
+            labels[neighbor] = nextLabel;
+            queue[tail++] = neighbor;
+          }
+        }
+      }
+      if (boundary) component.boundary.push({ x, y });
+    }
+    components.push(component);
+    nextLabel += 1;
+  }
+  return { components, labels };
 }
 
 function parseHexColor(value) {

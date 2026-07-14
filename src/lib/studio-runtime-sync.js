@@ -159,17 +159,12 @@ envelope.Parent = folder
 return HttpService:JSONEncode({ status = "loading", userId = ${userId}, chunks = ${chunks.length} })`,
     });
 
-    // El bridge tiene un costo fijo considerable por cada llamada. Enviar
-    // micro-lotes de cuatro bloques conserva tamaños de request moderados y
-    // reduce la entrega de un atlas grande de decenas de rondas a unas pocas.
-    const chunkBatchSize = 4;
-    for (let batchStart = 0; batchStart < chunks.length; batchStart += chunkBatchSize) {
-      const batchEntries = chunks
-        .slice(batchStart, batchStart + chunkBatchSize)
-        .map((value, offset) => ({
-          name: `Chunk${String(batchStart + offset + 1).padStart(3, "0")}`,
-          value,
-        }));
+    // El bridge tiene un límite práctico de tamaño de código. Cuatro bloques
+    // compactos caben, pero cuatro filas rle16x8 complejas pueden superar el
+    // límite y perderse silenciosamente. Conservamos como máximo cuatro y
+    // cortamos antes de 180k caracteres para que todos lleguen completos.
+    const batches = createChunkBatches(chunks);
+    for (const batchEntries of batches) {
       const batchLiteral = JSON.stringify(JSON.stringify(batchEntries));
       await this.client.callTool("eval_server_runtime", {
         code: `
@@ -201,6 +196,11 @@ local root = runtime and runtime:FindFirstChild("DynamicAtlases")
 local folder = root and root:FindFirstChild(${folderName})
 local event = runtime and runtime:FindFirstChild("AtlasUpdate")
 assert(folder and event and event:IsA("RemoteEvent"), "SpriteForge atlas transfer is incomplete")
+local received = 0
+for _, child in ipairs(folder:GetChildren()) do
+    if child:IsA("StringValue") and string.match(child.Name, "^Chunk%d+$") then received += 1 end
+end
+assert(received == ${chunks.length}, string.format("SpriteForge atlas expected %d chunks, received %d", ${chunks.length}, received))
 folder:SetAttribute("Status", "ready")
 event:FireAllClients({ status = "replicated-ready", userId = ${userId}, jobId = ${jobId} })
 return HttpService:JSONEncode({ status = "ready", userId = ${userId}, chunks = ${chunks.length} })`,
@@ -236,6 +236,34 @@ return HttpService:JSONEncode({ status = "ready", userId = ${userId}, chunks = $
     this.lastTickAt = new Date().toISOString();
     console.warn("[studio-runtime-sync]", this.lastError);
   }
+}
+
+export function createChunkBatches(chunks, {
+  maximumChunks = 4,
+  maximumCharacters = 180_000,
+} = {}) {
+  const batches = [];
+  let current = [];
+  let currentCharacters = 2;
+  chunks.forEach((value, index) => {
+    const entry = {
+      name: `Chunk${String(index + 1).padStart(3, "0")}`,
+      value,
+    };
+    const entryCharacters = JSON.stringify(entry).length + (current.length ? 1 : 0);
+    if (
+      current.length
+      && (current.length >= maximumChunks || currentCharacters + entryCharacters > maximumCharacters)
+    ) {
+      batches.push(current);
+      current = [];
+      currentCharacters = 2;
+    }
+    current.push(entry);
+    currentCharacters += entryCharacters;
+  });
+  if (current.length) batches.push(current);
+  return batches;
 }
 
 function parseNestedJson(value) {

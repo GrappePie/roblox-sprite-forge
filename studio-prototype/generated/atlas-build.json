@@ -1,10 +1,11 @@
 {
-  "sourceDirectory": "C:\\Users\\taffy\\Documents\\roblox-sprite-forge-local\\data\\generated\\26996e77-ac28-4d03-88b4-8ef6ce31a840",
+  "sourceDirectory": "C:\\Users\\taffy\\Documents\\roblox-sprite-forge-local\\data\\generated\\eeb77bc6-b0b5-4844-bdf1-c1f3a9dc9a2b",
   "userId": 1021056267,
   "username": "YukiManju",
   "width": 2048,
   "height": 11264,
-  "colors": 16,
+  "colors": 19,
+  "encoding": "rle16x8",
   "chunks": 88,
-  "packedBytes": 1819366
+  "packedBytes": 2653518
 }

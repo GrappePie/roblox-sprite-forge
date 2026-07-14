@@ -106,14 +106,21 @@ export async function harmonizeSpritePalette(inputImages, options = {}) {
     .composite(entries.map(([, input], index) => ({ input, left: index * width, top: 0 })))
     .png({ palette: true, colours: colors, dither: 0, compressionLevel: 9 })
     .toBuffer();
-  const sharedPalette = await readOpaquePalette(strip);
+  const [sharedPalette, accentPalette] = await Promise.all([
+    readOpaquePalette(strip),
+    readAccentPalette(entries),
+  ]);
 
   await Promise.all(entries.map(async ([key, original], index) => {
     const quantized = await sharp(strip)
       .extract({ left: index * width, top: 0, width, height })
       .png({ palette: false, compressionLevel: 9 })
       .toBuffer();
-    images.set(key, await preserveWarmColorFamilies(original, quantized, sharedPalette));
+    const warmPreserved = await preserveWarmColorFamilies(original, quantized, sharedPalette);
+    images.set(
+      key,
+      await preserveAccentColorFamilies(original, warmPreserved, accentPalette),
+    );
   }));
   return images;
 }
@@ -151,6 +158,68 @@ export async function preserveWarmColorFamilies(original, quantized, palette = [
   }).png({ palette: false, compressionLevel: 9 }).toBuffer();
 }
 
+/**
+ * Reserva hasta cuatro familias saturadas muy pequeñas (por ejemplo iris o
+ * maquillaje) para que la frecuencia global no las convierta en gris.
+ */
+export async function preserveAccentColorFamilies(original, quantized, palette = []) {
+  if (!palette.length) return Buffer.from(quantized);
+  const [source, output] = await Promise.all([
+    sharp(original).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+    sharp(quantized).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+  ]);
+  if (source.info.width !== output.info.width || source.info.height !== output.info.height) {
+    return Buffer.from(quantized);
+  }
+  let restored = 0;
+  for (let offset = 0; offset < output.data.length; offset += 4) {
+    if (source.data[offset + 3] <= 30 || output.data[offset + 3] <= 30) continue;
+    const sourceColor = [source.data[offset], source.data[offset + 1], source.data[offset + 2]];
+    if (!isAccentColor(sourceColor)) continue;
+    const replacement = nearestColor(sourceColor, palette);
+    if (hueDistance(sourceColor, replacement) > 50) continue;
+    const outputColor = [output.data[offset], output.data[offset + 1], output.data[offset + 2]];
+    if (colorDistanceSquared(outputColor, replacement) < 30 ** 2) continue;
+    output.data[offset] = replacement[0];
+    output.data[offset + 1] = replacement[1];
+    output.data[offset + 2] = replacement[2];
+    restored += 1;
+  }
+  if (!restored) return Buffer.from(quantized);
+  return sharp(output.data, {
+    raw: { width: output.info.width, height: output.info.height, channels: 4 },
+  }).png({ palette: false, compressionLevel: 9 }).toBuffer();
+}
+
+async function readAccentPalette(entries) {
+  const masters = entries.filter(([key]) => String(key).startsWith("master:"));
+  const samples = (masters.length ? masters : entries).slice(0, 16);
+  const buckets = new Map();
+  for (const [, input] of samples) {
+    const { data } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    for (let offset = 0; offset < data.length; offset += 4) {
+      if (data[offset + 3] <= 30) continue;
+      const color = [data[offset], data[offset + 1], data[offset + 2]];
+      if (!isAccentColor(color)) continue;
+      const key = Math.floor((colorHue(color) + 22.5) / 45) % 8;
+      const bucket = buckets.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 };
+      bucket.count += 1;
+      bucket.red += color[0];
+      bucket.green += color[1];
+      bucket.blue += color[2];
+      buckets.set(key, bucket);
+    }
+  }
+  return [...buckets.values()]
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 4)
+    .map((bucket) => [
+      Math.round(bucket.red / bucket.count),
+      Math.round(bucket.green / bucket.count),
+      Math.round(bucket.blue / bucket.count),
+    ]);
+}
+
 async function readOpaquePalette(input) {
   const { data } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const colors = new Map();
@@ -169,6 +238,30 @@ function isWarmColor([red, green, blue]) {
 function isNeutralLight([red, green, blue]) {
   return Math.max(red, green, blue) - Math.min(red, green, blue) <= 14
     && (red + green + blue) / 3 >= 145;
+}
+
+function isAccentColor([red, green, blue]) {
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  return maximum >= 120 && maximum - minimum >= 70;
+}
+
+function colorHue([red, green, blue]) {
+  const normalized = [red / 255, green / 255, blue / 255];
+  const maximum = Math.max(...normalized);
+  const minimum = Math.min(...normalized);
+  const delta = maximum - minimum;
+  if (!delta) return 0;
+  let hue;
+  if (maximum === normalized[0]) hue = ((normalized[1] - normalized[2]) / delta) % 6;
+  else if (maximum === normalized[1]) hue = (normalized[2] - normalized[0]) / delta + 2;
+  else hue = (normalized[0] - normalized[1]) / delta + 4;
+  return (hue * 60 + 360) % 360;
+}
+
+function hueDistance(left, right) {
+  const distance = Math.abs(colorHue(left) - colorHue(right));
+  return Math.min(distance, 360 - distance);
 }
 
 function nearestColor(source, palette) {

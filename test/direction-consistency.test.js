@@ -7,6 +7,7 @@ import {
   harmonizeSpritePalette,
   normalizeDiagonalMasters,
   normalizeDirectionalMasters,
+  preserveAccentColorFamilies,
   preserveWarmColorFamilies,
 } from "../src/lib/direction-consistency.js";
 import { animateCanonicalCell } from "../src/lib/motion.js";
@@ -180,6 +181,28 @@ test("la paleta compartida no convierte piel cálida en manchas grises", async (
   assert.ok(raw[0] - raw[1] >= 12);
   assert.ok(raw[1] - raw[2] >= 8);
   assert.deepEqual([...raw.subarray(4, 7)], [220, 220, 222]);
+});
+
+test("la paleta compartida reserva el color de unos ojos diminutos", async () => {
+  const original = await sharp(Buffer.from([
+    55, 165, 220, 255,
+    180, 180, 182, 255,
+  ]), { raw: { width: 2, height: 1, channels: 4 } }).png().toBuffer();
+  const quantized = await sharp(Buffer.from([
+    121, 124, 129, 255,
+    180, 180, 182, 255,
+  ]), { raw: { width: 2, height: 1, channels: 4 } }).png().toBuffer();
+  const corrected = await preserveAccentColorFamilies(original, quantized, [[65, 170, 215]]);
+  const raw = await sharp(corrected).ensureAlpha().raw().toBuffer();
+  assert.deepEqual([...raw.subarray(0, 3)], [65, 170, 215]);
+  assert.deepEqual([...raw.subarray(4, 7)], [180, 180, 182]);
+
+  const harmonized = await harmonizeSpritePalette(new Map([
+    ["master:down", original],
+    ["master:up", quantized],
+  ]), { paletteColors: 8 });
+  const shared = await sharp(harmonized.get("master:down")).ensureAlpha().raw().toBuffer();
+  assert.ok(shared[1] - shared[0] >= 70 && shared[2] - shared[0] >= 120);
 });
 
 test("las dos selecciones de maestro conservan fase 1 a 1 en las cuatro diagonales", async () => {
