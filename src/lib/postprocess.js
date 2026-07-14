@@ -454,14 +454,50 @@ export async function preserveSmallFaceDetails(source, quantized) {
 }
 
 /**
- * Cierra únicamente separaciones de uno o dos píxeles entre dos componentes
- * grandes con anatomía de cabeza y cuerpo. Accesorios flotantes pequeños no
- * cumplen el umbral y permanecen separados.
+ * Cierra separaciones pequeñas y refuerza un cuello que haya sobrevivido al
+ * downscale como una línea demasiado fina. El segundo caso es importante para
+ * pelo largo o capuchas: esos accesorios pueden mantener toda la silueta en un
+ * solo componente aunque visualmente quede cielo entre la cabeza y el torso.
  */
-export async function repairHeadTorsoConnection(input, { maximumGap = 3 } = {}) {
+export async function repairHeadTorsoConnection(input, {
+  maximumGap = 3,
+  minimumNeckRatio = 0.34,
+} = {}) {
   const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const { components, labels } = findAlphaComponents(data, info.width, info.height, 30);
-  if (components.length < 2) return Buffer.from(input);
+  let changed = false;
+
+  if (components.length >= 2) {
+    changed = connectSeparatedHeadAndBody(
+      data,
+      info.width,
+      info.height,
+      components,
+      labels,
+      maximumGap,
+    );
+  }
+  changed = reinforceNarrowNeck(
+    data,
+    info.width,
+    info.height,
+    minimumNeckRatio,
+  ) || changed;
+  if (!changed) return Buffer.from(input);
+
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png({ palette: false, compressionLevel: 9 })
+    .toBuffer();
+}
+
+function connectSeparatedHeadAndBody(
+  data,
+  width,
+  height,
+  components,
+  labels,
+  maximumGap,
+) {
   const opaquePixels = components.reduce((sum, component) => sum + component.size, 0);
   const overallTop = Math.min(...components.map((component) => component.top));
   const overallBottom = Math.max(...components.map((component) => component.bottom));
@@ -473,7 +509,7 @@ export async function repairHeadTorsoConnection(input, { maximumGap = 3 } = {}) 
       && component.bottom >= overallTop + subjectHeight * 0.72
     ))
     .sort((left, right) => right.size - left.size || right.bottom - left.bottom)[0];
-  if (!body) return Buffer.from(input);
+  if (!body) return false;
   const head = components
     .filter((component) => (
       component.label !== body.label
@@ -482,7 +518,7 @@ export async function repairHeadTorsoConnection(input, { maximumGap = 3 } = {}) 
       && component.bottom >= body.top - maximumGap
     ))
     .sort((left, right) => right.size - left.size)[0];
-  if (!head) return Buffer.from(input);
+  if (!head) return false;
 
   let bridge = null;
   for (const pixel of head.boundary) {
@@ -492,17 +528,17 @@ export async function repairHeadTorsoConnection(input, { maximumGap = 3 } = {}) 
         if (!distance || distance > maximumGap) continue;
         const x = pixel.x + dx;
         const y = pixel.y + dy;
-        if (x < 0 || x >= info.width || y < 0 || y >= info.height) continue;
-        if (labels[y * info.width + x] !== body.label) continue;
+        if (x < 0 || x >= width || y < 0 || y >= height) continue;
+        if (labels[y * width + x] !== body.label) continue;
         if (!bridge || distance < bridge.distance) {
           bridge = { distance, head: pixel, body: { x, y } };
         }
       }
     }
   }
-  if (!bridge || bridge.distance < 2) return Buffer.from(input);
+  if (!bridge || bridge.distance < 2) return false;
 
-  const bodyOffset = (bridge.body.y * info.width + bridge.body.x) * 4;
+  const bodyOffset = (bridge.body.y * width + bridge.body.x) * 4;
   const steps = Math.max(
     Math.abs(bridge.body.x - bridge.head.x),
     Math.abs(bridge.body.y - bridge.head.y),
@@ -510,16 +546,186 @@ export async function repairHeadTorsoConnection(input, { maximumGap = 3 } = {}) 
   for (let step = 1; step < steps; step += 1) {
     const x = Math.round(bridge.head.x + ((bridge.body.x - bridge.head.x) * step) / steps);
     const y = Math.round(bridge.head.y + ((bridge.body.y - bridge.head.y) * step) / steps);
-    const offset = (y * info.width + x) * 4;
+    const offset = (y * width + x) * 4;
     if (data[offset + 3] >= 30) continue;
     data[offset] = data[bodyOffset];
     data[offset + 1] = data[bodyOffset + 1];
     data[offset + 2] = data[bodyOffset + 2];
     data[offset + 3] = Math.max(220, data[bodyOffset + 3]);
   }
-  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
-    .png({ palette: false, compressionLevel: 9 })
-    .toBuffer();
+  return true;
+}
+
+function reinforceNarrowNeck(data, width, height, minimumNeckRatio) {
+  const anchor = analyzeFootAnchor(data, width, height);
+  if (!anchor) return false;
+  const { bounds } = anchor;
+  const subjectWidth = bounds.right - bounds.left + 1;
+  const subjectHeight = bounds.bottom - bounds.top + 1;
+  if (subjectWidth < 8 || subjectHeight < 18) return false;
+
+  const laneLeft = Math.round(bounds.left + subjectWidth * 0.18);
+  const laneRight = Math.round(bounds.right - subjectWidth * 0.18);
+  const rowProfile = [];
+  const profileBottom = Math.min(
+    bounds.bottom,
+    Math.round(bounds.top + subjectHeight * 0.62),
+  );
+  for (let y = bounds.top; y <= profileBottom; y += 1) {
+    const xs = [];
+    for (let x = laneLeft; x <= laneRight; x += 1) {
+      if (data[(y * width + x) * 4 + 3] >= 30) xs.push(x);
+    }
+    rowProfile.push({ y, xs, count: xs.length });
+  }
+
+  const headSearchEnd = Math.round(bounds.top + subjectHeight * 0.46);
+  const headPeak = rowProfile
+    .filter((row) => row.y <= headSearchEnd)
+    .reduce((winner, row) => (!winner || row.count > winner.count ? row : winner), null);
+  if (!headPeak || headPeak.count < 4) return false;
+
+  const neckSearchEnd = Math.min(
+    profileBottom,
+    Math.round(bounds.top + subjectHeight * 0.60),
+  );
+  const neckStart = findHeadMassDrop(
+    rowProfile,
+    headPeak,
+    neckSearchEnd,
+    subjectHeight,
+  );
+  const neckY = neckStart === null
+    ? null
+    : Math.min(neckSearchEnd, neckStart + Math.max(1, Math.round(subjectHeight * 0.02)));
+  const neck = neckY === null ? null : rowProfile.find((row) => row.y === neckY);
+  if (!neck) return false;
+
+  const bodyRows = rowProfile.filter((row) => (
+    row.y > neck.y
+    && row.y <= neck.y + Math.max(5, Math.round(subjectHeight * 0.15))
+  ));
+  const bodyPeak = bodyRows.reduce(
+    (winner, row) => (!winner || row.count > winner.count ? row : winner),
+    null,
+  );
+  if (!bodyPeak || bodyPeak.count < 4) return false;
+
+  const maximumNeckWidth = Math.min(headPeak.count, bodyPeak.count);
+  if (neck.count >= maximumNeckWidth * 0.88) return false;
+  const targetWidth = Math.max(
+    Math.max(4, Math.round(width * 0.055)),
+    Math.min(
+      Math.round(subjectWidth * Math.max(0.24, Math.min(0.44, minimumNeckRatio))),
+      Math.max(5, Math.round(width * 0.14)),
+    ),
+  );
+  if (neck.count >= targetWidth) return false;
+
+  const bodyXs = bodyRows
+    .slice(0, Math.max(3, Math.round(subjectHeight * 0.09)))
+    .flatMap((row) => row.xs);
+  const centerSamples = bodyXs.length ? bodyXs : neck.xs;
+  centerSamples.sort((left, right) => left - right);
+  const centerX = centerSamples[Math.floor(centerSamples.length / 2)];
+  if (!Number.isFinite(centerX)) return false;
+
+  const radiusY = Math.max(2, Math.min(5, Math.round(subjectHeight * 0.045)));
+  const dominantColor = findDominantNeckColor(
+    data,
+    width,
+    height,
+    centerX,
+    neck.y,
+    targetWidth,
+    radiusY,
+  );
+  if (!dominantColor) return false;
+
+  let filled = 0;
+  for (let dy = -radiusY; dy <= radiusY; dy += 1) {
+    const y = neck.y + dy;
+    if (y < bounds.top || y > bounds.bottom) continue;
+    const taper = Math.floor(Math.abs(dy) * 0.55);
+    const halfWidth = Math.max(2, Math.floor((targetWidth - taper) / 2));
+    for (let x = centerX - halfWidth; x <= centerX + halfWidth; x += 1) {
+      if (x < laneLeft || x > laneRight) continue;
+      const offset = (y * width + x) * 4;
+      if (data[offset + 3] >= 30) continue;
+      const color = findNearbyNeckColor(
+        data,
+        width,
+        height,
+        x,
+        y,
+        dominantColor,
+      ) ?? dominantColor;
+      data[offset] = color[0];
+      data[offset + 1] = color[1];
+      data[offset + 2] = color[2];
+      data[offset + 3] = 255;
+      filled += 1;
+    }
+  }
+  return filled > 0;
+}
+
+function findHeadMassDrop(rows, headPeak, searchEnd, subjectHeight) {
+  const threshold = Math.max(3, headPeak.count * 0.75);
+  const earliest = headPeak.y + Math.max(2, Math.round(subjectHeight * 0.04));
+  for (let index = 0; index + 1 < rows.length; index += 1) {
+    const row = rows[index];
+    const next = rows[index + 1];
+    if (row.y < earliest || row.y > searchEnd || next.y > searchEnd) continue;
+    if (row.count < threshold && next.count < threshold) return row.y;
+  }
+  return null;
+}
+
+function findDominantNeckColor(data, width, height, centerX, neckY, targetWidth, radiusY) {
+  const colors = new Map();
+  const halfWidth = Math.max(2, Math.ceil(targetWidth / 2));
+  const collect = (allowDark) => {
+    colors.clear();
+    for (let y = neckY; y <= Math.min(height - 1, neckY + radiusY + 5); y += 1) {
+      for (let x = Math.max(0, centerX - halfWidth); x <= Math.min(width - 1, centerX + halfWidth); x += 1) {
+        const offset = (y * width + x) * 4;
+        if (data[offset + 3] < 30) continue;
+        const color = [data[offset], data[offset + 1], data[offset + 2]];
+        if (!allowDark && color[0] + color[1] + color[2] < 105) continue;
+        const key = color.join(",");
+        const entry = colors.get(key) ?? { color, count: 0 };
+        entry.count += 1;
+        colors.set(key, entry);
+      }
+    }
+  };
+  collect(false);
+  if (!colors.size) collect(true);
+  return [...colors.values()]
+    .sort((left, right) => right.count - left.count)[0]?.color ?? null;
+}
+
+function findNearbyNeckColor(data, width, height, x, y, dominantColor) {
+  for (let radius = 1; radius <= 4; radius += 1) {
+    let winner = null;
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        const sampleX = x + dx;
+        const sampleY = y + dy;
+        if (sampleX < 0 || sampleX >= width || sampleY < 0 || sampleY >= height) continue;
+        const offset = (sampleY * width + sampleX) * 4;
+        if (data[offset + 3] < 30) continue;
+        const color = [data[offset], data[offset + 1], data[offset + 2]];
+        const distance = squaredDistance(color, dominantColor);
+        if (distance > 105 ** 2) continue;
+        if (!winner || distance < winner.distance) winner = { color, distance };
+      }
+    }
+    if (winner) return winner.color;
+  }
+  return null;
 }
 
 /** Elimina únicamente píxeles alfa completamente solos; conserva grupos y diagonales finas. */

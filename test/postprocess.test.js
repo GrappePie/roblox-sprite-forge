@@ -133,6 +133,29 @@ test("cierra una separación mínima entre una cabeza grande y el torso", async 
   assert.ok(bridgePixels.some((alpha) => alpha >= 220));
 });
 
+test("refuerza el cuello visible aunque el cabello ya conecte cabeza y torso", async () => {
+  const width = 32;
+  const height = 32;
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 2; y <= 10; y += 1) {
+    for (let x = 8; x <= 22; x += 1) pixels.set([170, 172, 176, 255], (y * width + x) * 4);
+  }
+  for (let y = 14; y <= 29; y += 1) {
+    for (let x = 11; x <= 21; x += 1) pixels.set([130, 132, 136, 255], (y * width + x) * 4);
+  }
+  // El mechón izquierdo deja toda la silueta conectada, pero el cuello central
+  // conserva tres filas transparentes, igual que en la captura diagonal real.
+  for (let y = 9; y <= 18; y += 1) {
+    for (let x = 8; x <= 10; x += 1) pixels.set([24, 24, 28, 255], (y * width + x) * 4);
+  }
+  const repaired = await repairHeadTorsoConnection(
+    await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer(),
+  );
+  const data = await sharp(repaired).ensureAlpha().raw().toBuffer();
+  assert.ok(data[(12 * width + 16) * 4 + 3] >= 220);
+  assert.equal(data[(12 * width + 25) * 4 + 3], 0);
+});
+
 test("elimina un píxel aislado sin borrar detalles conectados en diagonal", async () => {
   const source = await sharp({
     create: { width: 8, height: 8, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },

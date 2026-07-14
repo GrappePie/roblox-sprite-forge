@@ -563,7 +563,7 @@ export class JobManager {
             cell = await renderStudioSpriteCell(
               transparentStudioReference,
               studioCellTransform,
-              directionalRenderOptions(job.input, frame.direction.key),
+              directionalRenderOptions(job.input, frame.direction.key, frame.clip.key),
             );
             directionMasterCell = cell;
             directionMasters.set(direction, cell);
@@ -601,7 +601,7 @@ export class JobManager {
               cell = await renderStudioSpriteCell(
                 transparentMotionReference,
                 frame.clip.key.startsWith("swim") ? studioSwimCellTransform : studioCellTransform,
-                directionalRenderOptions(job.input, frame.direction.key),
+                directionalRenderOptions(job.input, frame.direction.key, frame.clip.key),
               );
               if (!frame.clip.key.startsWith("swim") && !(await hasVerticalBodyContinuity(cell))) {
                 throw new AppError(`La pose real ${frame.key} perdió la continuidad entre torso y pies.`, {
@@ -970,7 +970,7 @@ export class JobManager {
     const transparent = await removeChromaBackground(raw, chroma);
     const cell = await renderSpriteCell(
       transparent,
-      directionalRenderOptions(job.input, frame.direction.key),
+      directionalRenderOptions(job.input, frame.direction.key, frame.clip.key),
     );
     const writes = [fs.writeFile(path.join(framesDirectory, `${frame.key}.png`), cell)];
     if (this.keepRawFrames) writes.push(fs.writeFile(path.join(rawDirectory, `${frame.key}.png`), raw));
@@ -1087,11 +1087,14 @@ export class JobManager {
   }
 }
 
-function directionalRenderOptions(input, direction) {
+function directionalRenderOptions(input, direction, clip) {
   return {
     ...input,
     preserveFaceDetails: FACE_DETAIL_DIRECTIONS.has(direction),
-    repairHeadTorso: direction === "up_left" || direction === "up_right",
+    repairHeadTorso: (
+      (direction === "up_left" || direction === "up_right")
+      && !clip?.startsWith("swim")
+    ),
   };
 }
 
