@@ -220,6 +220,7 @@ export async function renderSpriteCell(input, {
   paletteColors,
   preserveFaceDetails = false,
   repairHeadTorso = false,
+  repairTorsoHip = false,
 }) {
   const size = clampInteger(cellSize, 16, 512, 64);
   const colors = clampInteger(paletteColors, 8, 256, 64);
@@ -270,7 +271,9 @@ export async function renderSpriteCell(input, {
     ? await preserveSmallFaceDetails(alignedSource, alignedQuantized)
     : alignedQuantized;
   const cleaned = await removeIsolatedAlphaPixels(detailed);
-  return repairHeadTorso ? repairHeadTorsoConnection(cleaned) : cleaned;
+  let repaired = repairHeadTorso ? await repairHeadTorsoConnection(cleaned) : cleaned;
+  repaired = repairTorsoHip ? await repairTorsoHipPixels(repaired) : repaired;
+  return repaired;
 }
 
 /**
@@ -350,6 +353,7 @@ export async function renderStudioSpriteCell(input, transform, {
   paletteColors,
   preserveFaceDetails = false,
   repairHeadTorso = false,
+  repairTorsoHip = false,
 } = {}) {
   const metadata = await sharp(input).metadata();
   const size = clampInteger(cellSize, 16, 512, transform?.outputSize ?? 64);
@@ -400,7 +404,9 @@ export async function renderStudioSpriteCell(input, transform, {
     ? await preserveSmallFaceDetails(registeredSource, registered)
     : registered;
   const cleaned = await removeIsolatedAlphaPixels(detailed);
-  return repairHeadTorso ? repairHeadTorsoConnection(cleaned) : cleaned;
+  let repaired = repairHeadTorso ? await repairHeadTorsoConnection(cleaned) : cleaned;
+  repaired = repairTorsoHip ? await repairTorsoHipPixels(repaired) : repaired;
+  return repaired;
 }
 
 /**
@@ -726,6 +732,93 @@ function findNearbyNeckColor(data, width, height, x, y, dominantColor) {
     if (winner) return winner.color;
   }
   return null;
+}
+
+/**
+ * Rellena agujeros de uno a cuatro píxeles que el downscale deja dentro del
+ * borde inferior del torso. La reparación está limitada a la banda de cadera,
+ * exige color compatible a ambos lados y soporte vertical; por eso no cierra
+ * el espacio anatómico entre las piernas ni pega manos o accesorios al cuerpo.
+ */
+export async function repairTorsoHipPixels(input, { maximumGap = 4 } = {}) {
+  const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const anchor = analyzeFootAnchor(data, info.width, info.height);
+  if (!anchor) return Buffer.from(input);
+  const { bounds } = anchor;
+  const subjectWidth = bounds.right - bounds.left + 1;
+  const subjectHeight = bounds.bottom - bounds.top + 1;
+  if (subjectWidth < 8 || subjectHeight < 18) return Buffer.from(input);
+
+  const top = Math.round(bounds.top + subjectHeight * 0.50);
+  const bottom = Math.min(
+    bounds.bottom,
+    Math.round(bounds.top + subjectHeight * 0.64),
+  );
+  const laneLeft = Math.round(bounds.left + subjectWidth * 0.16);
+  const laneRight = Math.round(bounds.right - subjectWidth * 0.14);
+  const gapLimit = Math.max(1, Math.min(
+    clampInteger(maximumGap, 1, 8, 4),
+    Math.max(2, Math.round(info.width * 0.032)),
+  ));
+  let filled = 0;
+
+  for (let y = top; y <= bottom; y += 1) {
+    let x = laneLeft;
+    while (x <= laneRight) {
+      if (data[(y * info.width + x) * 4 + 3] >= 30) {
+        x += 1;
+        continue;
+      }
+      const gapStart = x;
+      while (x <= laneRight && data[(y * info.width + x) * 4 + 3] < 30) x += 1;
+      const gapEnd = x - 1;
+      const gapWidth = gapEnd - gapStart + 1;
+      if (gapStart <= laneLeft || x > laneRight || gapWidth > gapLimit) continue;
+
+      const leftOffset = (y * info.width + gapStart - 1) * 4;
+      const rightOffset = (y * info.width + x) * 4;
+      const leftColor = [data[leftOffset], data[leftOffset + 1], data[leftOffset + 2]];
+      const rightColor = [data[rightOffset], data[rightOffset + 1], data[rightOffset + 2]];
+      if (!areHipBoundaryColorsCompatible(leftColor, rightColor)) continue;
+
+      let supported = 0;
+      for (let gapX = gapStart; gapX <= gapEnd; gapX += 1) {
+        const above = y > 0 ? data[((y - 1) * info.width + gapX) * 4 + 3] : 0;
+        const below = y + 1 < info.height
+          ? data[((y + 1) * info.width + gapX) * 4 + 3]
+          : 0;
+        if (above >= 30 || below >= 30) supported += 1;
+      }
+      if (supported < Math.max(1, Math.ceil(gapWidth * 0.5))) continue;
+
+      for (let gapX = gapStart; gapX <= gapEnd; gapX += 1) {
+        const offset = (y * info.width + gapX) * 4;
+        const color = gapX - gapStart < gapEnd - gapX ? leftColor : rightColor;
+        data[offset] = color[0];
+        data[offset + 1] = color[1];
+        data[offset + 2] = color[2];
+        data[offset + 3] = 255;
+        filled += 1;
+      }
+    }
+  }
+  if (!filled) return Buffer.from(input);
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png({ palette: false, compressionLevel: 9 })
+    .toBuffer();
+}
+
+function areHipBoundaryColorsCompatible(left, right) {
+  if (squaredDistance(left, right) <= 92 ** 2) return true;
+  const leftRange = Math.max(...left) - Math.min(...left);
+  const rightRange = Math.max(...right) - Math.min(...right);
+  const leftBrightness = left[0] + left[1] + left[2];
+  const rightBrightness = right[0] + right[1] + right[2];
+  return leftRange <= 42
+    && rightRange <= 42
+    && leftBrightness >= 135
+    && rightBrightness >= 135
+    && Math.abs(leftBrightness - rightBrightness) <= 180;
 }
 
 /** Elimina únicamente píxeles alfa completamente solos; conserva grupos y diagonales finas. */

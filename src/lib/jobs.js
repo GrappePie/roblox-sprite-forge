@@ -1088,12 +1088,17 @@ export class JobManager {
 }
 
 function directionalRenderOptions(input, direction, clip) {
+  const isUpright = !clip?.startsWith("swim");
   return {
     ...input,
     preserveFaceDetails: FACE_DETAIL_DIRECTIONS.has(direction),
     repairHeadTorso: (
       (direction === "up_left" || direction === "up_right")
-      && !clip?.startsWith("swim")
+      && isUpright
+    ),
+    repairTorsoHip: (
+      (direction === "up_left" || direction === "up" || direction === "up_right")
+      && isUpright
     ),
   };
 }

@@ -13,6 +13,7 @@ import {
   measureSpriteTorsoAnchor,
   preserveSmallFaceDetails,
   repairHeadTorsoConnection,
+  repairTorsoHipPixels,
   removeIsolatedAlphaPixels,
   removeChromaBackground,
   renderSpriteCell,
@@ -154,6 +155,28 @@ test("refuerza el cuello visible aunque el cabello ya conecte cabeza y torso", a
   const data = await sharp(repaired).ensureAlpha().raw().toBuffer();
   assert.ok(data[(12 * width + 16) * 4 + 3] >= 220);
   assert.equal(data[(12 * width + 25) * 4 + 3], 0);
+});
+
+test("rellena píxeles incompletos de la cadera sin cerrar el espacio entre las piernas", async () => {
+  const width = 32;
+  const height = 32;
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 2; y <= 20; y += 1) {
+    for (let x = 8; x <= 23; x += 1) pixels.set([150, 152, 156, 255], (y * width + x) * 4);
+  }
+  for (let y = 21; y <= 29; y += 1) {
+    for (let x = 10; x <= 13; x += 1) pixels.set([120, 122, 126, 255], (y * width + x) * 4);
+    for (let x = 18; x <= 21; x += 1) pixels.set([120, 122, 126, 255], (y * width + x) * 4);
+  }
+  for (const [x, y] of [[15, 17], [16, 17], [15, 18], [16, 18]]) {
+    pixels.fill(0, (y * width + x) * 4, (y * width + x) * 4 + 4);
+  }
+  const repaired = await repairTorsoHipPixels(
+    await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer(),
+  );
+  const data = await sharp(repaired).ensureAlpha().raw().toBuffer();
+  assert.ok(data[(18 * width + 15) * 4 + 3] >= 220);
+  assert.equal(data[(24 * width + 15) * 4 + 3], 0);
 });
 
 test("elimina un píxel aislado sin borrar detalles conectados en diagonal", async () => {
