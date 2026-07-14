@@ -16,7 +16,7 @@ export function getAvatarDetailRecommendation(bundle) {
 
   return {
     needsHighDetail,
-    recommendedCellSize: needsHighDetail ? 128 : null,
+    recommendedCellSize: needsHighDetail ? 144 : null,
     recommendedRenderResolution: needsHighDetail ? 1024 : null,
     height,
     width,

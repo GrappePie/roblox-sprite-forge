@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { getAvatarDetailRecommendation } from "../public/avatar-detail.js";
 
-test("recomienda 128px para un avatar Roblox alto y delgado", () => {
+test("recomienda 144px para un avatar Roblox alto y delgado", () => {
   const recommendation = getAvatarDetailRecommendation({
     avatar: {
       scales: { height: 1.05, width: 0.7 },
@@ -10,7 +10,7 @@ test("recomienda 128px para un avatar Roblox alto y delgado", () => {
     },
   });
   assert.equal(recommendation.needsHighDetail, true);
-  assert.equal(recommendation.recommendedCellSize, 128);
+  assert.equal(recommendation.recommendedCellSize, 144);
   assert.equal(recommendation.recommendedRenderResolution, 1024);
   assert.ok(recommendation.reasons.includes("tall-body"));
   assert.ok(recommendation.reasons.includes("slender-body"));

@@ -9,7 +9,7 @@ export const projectRoot = path.resolve(currentDirectory, "..");
 loadDotEnv(path.join(projectRoot, ".env"));
 
 const renderResolutions = [512, 768, 1024];
-const cellSizes = [48, 64, 96, 128];
+const cellSizes = [48, 64, 96, 128, 144];
 const paletteSizes = [32, 48, 64, 96, 128];
 const styles = ["handheld", "minimal", "detailed"];
 const steps = [4, 6, 8, 10, 12];

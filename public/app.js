@@ -940,7 +940,7 @@ function applyAvatarDetailRecommendation(avatar) {
   const accessoryCopy = recommendation.reasons.includes("tall-accessory")
     ? " y accesorios verticales"
     : "";
-  elements.detailRecommendation.textContent = `Detalle adaptativo activado · proporción ${recommendation.height.toFixed(2)} alto / ${recommendation.width.toFixed(2)} ancho${accessoryCopy}. Se seleccionó 128 × 128 y resolución 1024 para conservar píxeles del cuerpo.`;
+  elements.detailRecommendation.textContent = `Detalle adaptativo activado · proporción ${recommendation.height.toFixed(2)} alto / ${recommendation.width.toFixed(2)} ancho${accessoryCopy}. Se seleccionó 144 × 144 y resolución 1024 para conservar mejor el rostro, los accesorios y el contorno.`;
   elements.detailRecommendation.classList.remove("hidden");
 }
 
