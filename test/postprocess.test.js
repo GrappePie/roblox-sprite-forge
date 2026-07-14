@@ -14,6 +14,7 @@ import {
   preserveSmallFaceDetails,
   repairHeadTorsoConnection,
   repairInternalAlphaHoles,
+  repairNarrowAlphaCracks,
   repairTorsoHipPixels,
   removeIsolatedAlphaPixels,
   removeChromaBackground,
@@ -202,6 +203,34 @@ test("cierra perforaciones alfa internas sin rellenar entrantes ni separar las p
   assert.ok(data[(8 * width + 10) * 4 + 3] >= 220);
   assert.equal(data[(10 * width + 5) * 4 + 3], 0);
   assert.equal(data[(18 * width + 12) * 4 + 3], 0);
+});
+
+test("cierra grietas internas estrechas sin sellar su salida ni unir extremidades", async () => {
+  const width = 28;
+  const height = 26;
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 3; y <= 16; y += 1) {
+    for (let x = 4; x <= 20; x += 1) pixels.set([176, 179, 184, 255], (y * width + x) * 4);
+  }
+  for (let y = 17; y <= 23; y += 1) {
+    for (let x = 6; x <= 10; x += 1) pixels.set([92, 95, 100, 255], (y * width + x) * 4);
+    for (let x = 15; x <= 19; x += 1) pixels.set([92, 95, 100, 255], (y * width + x) * 4);
+  }
+  for (const [x, y] of [[10, 9], [11, 9], [12, 9], [10, 10], [11, 10], [12, 10]]) {
+    pixels.fill(0, (y * width + x) * 4, (y * width + x) * 4 + 4);
+  }
+  for (let x = 13; x <= 20; x += 1) {
+    pixels.fill(0, (10 * width + x) * 4, (10 * width + x) * 4 + 4);
+  }
+  const repaired = await repairNarrowAlphaCracks(
+    await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer(),
+  );
+  const data = await sharp(repaired).ensureAlpha().raw().toBuffer();
+  assert.ok(data[(9 * width + 10) * 4 + 3] >= 220);
+  assert.equal(data[(10 * width + 20) * 4 + 3], 0);
+  assert.equal(data[(20 * width + 12) * 4 + 3], 0);
+  const repeated = await repairNarrowAlphaCracks(repaired);
+  assert.deepEqual(await sharp(repeated).ensureAlpha().raw().toBuffer(), data);
 });
 
 test("elimina un píxel aislado sin borrar detalles conectados en diagonal", async () => {

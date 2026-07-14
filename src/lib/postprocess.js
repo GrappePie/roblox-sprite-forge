@@ -274,6 +274,7 @@ export async function renderSpriteCell(input, {
   let repaired = repairHeadTorso ? await repairHeadTorsoConnection(cleaned) : cleaned;
   repaired = repairTorsoHip ? await repairTorsoHipPixels(repaired) : repaired;
   repaired = await repairInternalAlphaHoles(repaired);
+  repaired = await repairNarrowAlphaCracks(repaired);
   return repaired;
 }
 
@@ -408,6 +409,7 @@ export async function renderStudioSpriteCell(input, transform, {
   let repaired = repairHeadTorso ? await repairHeadTorsoConnection(cleaned) : cleaned;
   repaired = repairTorsoHip ? await repairTorsoHipPixels(repaired) : repaired;
   repaired = await repairInternalAlphaHoles(repaired);
+  repaired = await repairNarrowAlphaCracks(repaired);
   return repaired;
 }
 
@@ -887,6 +889,80 @@ export async function repairInternalAlphaHoles(input, { maximumArea = 6 } = {}) 
   }
 
   if (!filled) return Buffer.from(input);
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png({ palette: false, compressionLevel: 9 })
+    .toBuffer();
+}
+
+/**
+ * Repara cavidades pequeñas que siguen conectadas con el fondo por una grieta
+ * estrecha. Solo pinta un píxel cuando encuentra cuerpo en los cuatro ejes y
+ * al menos un par opuesto pertenece a una paleta compatible. Cada pasada lee
+ * una instantánea estable y el límite corto evita que el cierre se propague.
+ */
+export async function repairNarrowAlphaCracks(input, {
+  maximumReach = 3,
+  maximumPasses = 6,
+} = {}) {
+  const decoded = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let data = Buffer.from(decoded.data);
+  const { info } = decoded;
+  const reach = clampInteger(maximumReach, 1, 5, 3);
+  const passes = clampInteger(maximumPasses, 1, 8, 6);
+  let totalFilled = 0;
+
+  for (let pass = 0; pass < passes; pass += 1) {
+    const source = Buffer.from(data);
+    const output = Buffer.from(data);
+    let passFilled = 0;
+    const findBoundary = (x, y, dx, dy) => {
+      for (let distance = 1; distance <= reach; distance += 1) {
+        const nextX = x + dx * distance;
+        const nextY = y + dy * distance;
+        if (nextX < 0 || nextY < 0 || nextX >= info.width || nextY >= info.height) return null;
+        const offset = (nextY * info.width + nextX) * 4;
+        if (source[offset + 3] < 30) continue;
+        return {
+          distance,
+          color: [source[offset], source[offset + 1], source[offset + 2]],
+        };
+      }
+      return null;
+    };
+
+    for (let y = 0; y < info.height; y += 1) {
+      for (let x = 0; x < info.width; x += 1) {
+        const offset = (y * info.width + x) * 4;
+        if (source[offset + 3] >= 30) continue;
+        const left = findBoundary(x, y, -1, 0);
+        const right = findBoundary(x, y, 1, 0);
+        const above = findBoundary(x, y, 0, -1);
+        const below = findBoundary(x, y, 0, 1);
+        if (!left || !right || !above || !below) continue;
+
+        const pairs = [];
+        if (areHipBoundaryColorsCompatible(left.color, right.color)) pairs.push([left, right]);
+        if (areHipBoundaryColorsCompatible(above.color, below.color)) pairs.push([above, below]);
+        if (!pairs.length) continue;
+        pairs.sort((a, b) => (
+          squaredDistance(a[0].color, a[1].color) - squaredDistance(b[0].color, b[1].color)
+          || (a[0].distance + a[1].distance) - (b[0].distance + b[1].distance)
+        ));
+        const pair = pairs[0];
+        const color = pair[0].distance <= pair[1].distance ? pair[0].color : pair[1].color;
+        output[offset] = color[0];
+        output[offset + 1] = color[1];
+        output[offset + 2] = color[2];
+        output[offset + 3] = 255;
+        passFilled += 1;
+      }
+    }
+    if (!passFilled) break;
+    data = output;
+    totalFilled += passFilled;
+  }
+
+  if (!totalFilled) return Buffer.from(input);
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
     .png({ palette: false, compressionLevel: 9 })
     .toBuffer();
