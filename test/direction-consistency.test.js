@@ -7,6 +7,7 @@ import {
   harmonizeSpritePalette,
   normalizeDiagonalMasters,
   normalizeDirectionalMasters,
+  preserveWarmColorFamilies,
 } from "../src/lib/direction-consistency.js";
 import { animateCanonicalCell } from "../src/lib/motion.js";
 import { alignSpriteCell, measureSpriteFootAnchor } from "../src/lib/postprocess.js";
@@ -159,6 +160,26 @@ test("las poses capturadas comparten la paleta sin perder sus claves de frame", 
     }
   }
   assert.ok(colors.size <= 8, `la paleta compartida contiene ${colors.size} colores`);
+});
+
+test("la paleta compartida no convierte piel cálida en manchas grises", async () => {
+  const original = await sharp(Buffer.from([
+    219, 191, 160, 255,
+    220, 220, 222, 255,
+  ]), { raw: { width: 2, height: 1, channels: 4 } }).png().toBuffer();
+  const quantized = await sharp(Buffer.from([
+    196, 196, 196, 255,
+    220, 220, 222, 255,
+  ]), { raw: { width: 2, height: 1, channels: 4 } }).png().toBuffer();
+  const corrected = await preserveWarmColorFamilies(original, quantized, [
+    [197, 163, 130],
+    [196, 196, 196],
+    [220, 220, 222],
+  ]);
+  const raw = await sharp(corrected).ensureAlpha().raw().toBuffer();
+  assert.ok(raw[0] - raw[1] >= 12);
+  assert.ok(raw[1] - raw[2] >= 8);
+  assert.deepEqual([...raw.subarray(4, 7)], [220, 220, 222]);
 });
 
 test("las dos selecciones de maestro conservan fase 1 a 1 en las cuatro diagonales", async () => {

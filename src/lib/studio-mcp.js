@@ -149,6 +149,8 @@ export class StudioCaptureService {
     framesPerAnimation = 8,
     frameCounts = {},
     clips = ["idle", "walk", "run", "jump", "fall", "climb", "swim"],
+    onCapture = null,
+    pipelineWindow = 8,
     signal,
   }) {
     if (this.active) {
@@ -191,6 +193,30 @@ export class StudioCaptureService {
       );
 
       let screenshotCalls = 0;
+      const capturePipelineWindow = Math.max(1, Math.min(16, Math.trunc(Number(pipelineWindow)) || 8));
+      const capturePipelineTasks = new Set();
+      const capturePipelineFailures = [];
+      let pipelinedFrames = 0;
+      const queueCapturedFrame = async (entry) => {
+        if (typeof onCapture !== "function") return;
+        const task = Promise.resolve()
+          .then(() => onCapture(entry))
+          .then(() => { pipelinedFrames += 1; })
+          .catch((error) => {
+            capturePipelineFailures.push({
+              key: entry.key,
+              reason: error instanceof Error ? error.message : String(error),
+            });
+          })
+          .finally(() => capturePipelineTasks.delete(task));
+        capturePipelineTasks.add(task);
+        if (capturePipelineTasks.size >= capturePipelineWindow) {
+          await Promise.race(capturePipelineTasks);
+        }
+      };
+      const flushCapturePipeline = async () => {
+        await Promise.all(capturePipelineTasks);
+      };
       const takeScreenshot = async () => {
         const screenshot = await this.client.callTool(
           "capture_screenshot",
@@ -213,7 +239,9 @@ export class StudioCaptureService {
             signal,
           );
           const image = await takeScreenshot();
-          images.set(direction, await cropStudioViewport(image.buffer, renderResolution));
+          const cropped = await cropStudioViewport(image.buffer, renderResolution);
+          images.set(direction, cropped);
+          await queueCapturedFrame({ kind: "direction", key: direction, direction, buffer: cropped });
         }
       }
 
@@ -289,12 +317,19 @@ export class StudioCaptureService {
                     frameCount,
                     gridSize,
                   );
-                  frames.forEach((frame, index) => {
-                    motionImages[motion.key].set(
-                      `${direction}_${motion.key}_${index + 1}`,
-                      frame,
-                    );
-                  });
+                  for (let index = 0; index < frames.length; index += 1) {
+                    const key = `${direction}_${motion.key}_${index + 1}`;
+                    const frame = frames[index];
+                    motionImages[motion.key].set(key, frame);
+                    await queueCapturedFrame({
+                      kind: "motion",
+                      key,
+                      direction,
+                      clip: motion.key,
+                      frameIndex: index + 1,
+                      buffer: frame,
+                    });
+                  }
                 }
                 captureMethods[motion.key] = "world-grid-batch";
                 capturedAsBatch = true;
@@ -321,10 +356,17 @@ export class StudioCaptureService {
                     signal,
                   );
                   const image = await takeScreenshot();
-                  motionImages[motion.key].set(
-                    `${direction}_${motion.key}_${frameIndex}`,
-                    await cropStudioViewport(image.buffer, renderResolution),
-                  );
+                  const key = `${direction}_${motion.key}_${frameIndex}`;
+                  const frame = await cropStudioViewport(image.buffer, renderResolution);
+                  motionImages[motion.key].set(key, frame);
+                  await queueCapturedFrame({
+                    kind: "motion",
+                    key,
+                    direction,
+                    clip: motion.key,
+                    frameIndex,
+                    buffer: frame,
+                  });
                 }
               }
             }
@@ -334,6 +376,7 @@ export class StudioCaptureService {
           console.warn(`[studio-${motion.key}-capture-fallback]`, error instanceof Error ? error.message : error);
         }
       }
+      await flushCapturePipeline();
       const idleImages = motionImages.idle;
       const idleAltImages = motionImages.idle_alt;
       const walkImages = motionImages.walk;
@@ -390,6 +433,12 @@ export class StudioCaptureService {
           captureMethods,
           screenshotCalls,
           batchFallbacks,
+          capturePipeline: {
+            mode: typeof onCapture === "function" ? "bounded-overlap" : "disabled",
+            window: capturePipelineWindow,
+            processedFrames: pipelinedFrames,
+            failures: capturePipelineFailures,
+          },
         },
       };
     } finally {

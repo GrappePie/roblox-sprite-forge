@@ -213,6 +213,60 @@ test("recaptura únicamente los clips solicitados", async () => {
   assert.equal(calls.filter((call) => call.name === "capture_screenshot").length, 16);
 });
 
+test("preprocesa capturas en paralelo con una ventana limitada", async () => {
+  const screenshot = await sharp({
+    create: { width: 24, height: 16, channels: 3, background: "#ff00ff" },
+  }).png().toBuffer();
+  const asText = (value) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
+  const client = {
+    diagnose: async () => ({ ok: true, place: { name: "Pixel avatar", id: 1, running: true } }),
+    async callTool(name, args) {
+      if (name === "capture_screenshot") {
+        return { content: [{ type: "image", mimeType: "image/png", data: screenshot.toString("base64") }] };
+      }
+      if (name === "eval_server_runtime" && args.code.includes("GetHumanoidDescriptionFromUserIdAsync")) {
+        return asText({ result: JSON.stringify({
+          animations: {},
+          resolvedAnimations: { ClimbAnimation: "rbxassetid://654" },
+        }) });
+      }
+      if (name === "eval_server_runtime" && args.code.includes("SpriteForgeResolvedClimb")) {
+        return asText({ result: JSON.stringify({ ready: true, length: 0.8 }) });
+      }
+      return asText({ result: true });
+    },
+  };
+  let active = 0;
+  let maximumActive = 0;
+  const keys = [];
+  const service = new StudioCaptureService({ client, format: "png" });
+  const capture = await service.captureTurntable({
+    userId: 42,
+    renderResolution: 16,
+    chroma: { hex: "#FF00FF" },
+    framesPerAnimation: 2,
+    clips: ["climb"],
+    pipelineWindow: 4,
+    onCapture: async ({ key }) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      keys.push(key);
+      active -= 1;
+    },
+  });
+
+  assert.equal(keys.length, 16);
+  assert.ok(maximumActive > 1);
+  assert.ok(maximumActive <= 4);
+  assert.deepEqual(capture.source.capturePipeline, {
+    mode: "bounded-overlap",
+    window: 4,
+    processedFrames: 16,
+    failures: [],
+  });
+});
+
 test("captura flotación y nado nivel/arriba/abajo con una sola selección", async () => {
   const screenshot = await sharp({
     create: { width: 24, height: 16, channels: 3, background: "#ff00ff" },

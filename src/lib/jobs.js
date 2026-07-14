@@ -374,6 +374,8 @@ export class JobManager {
       let studioTurntable = reusableStudioCapture;
       const studioReferenceNames = new Map();
       const studioMotionCells = new Map();
+      const preparedStudioReferences = new Map();
+      const captureCheckpointPath = path.join(jobDirectory, "capture-checkpoint.json");
       if (this.studioCapture) {
         const explicitlyRequested = new Set(job.input.recaptureClips ?? []);
         const captureClips = STUDIO_CLIP_KEYS.filter((selection) => {
@@ -409,6 +411,15 @@ export class JobManager {
         });
         try {
           if (captureClips.length) {
+            await fs.mkdir(studioReferencesDirectory, { recursive: true });
+            const checkpoint = {
+              version: 1,
+              status: "capturing",
+              capturedFrames: 0,
+              lastKey: null,
+              updatedAt: new Date().toISOString(),
+            };
+            let checkpointWrite = Promise.resolve();
             const freshCapture = await this.studioCapture.captureTurntable({
               userId: bundle.user.id,
               renderResolution: job.input.renderResolution,
@@ -416,8 +427,31 @@ export class JobManager {
               framesPerAnimation: job.input.framesPerAnimation,
               frameCounts,
               clips: captureClips,
+              pipelineWindow: 8,
+              onCapture: async ({ key, buffer }) => {
+                await fs.writeFile(path.join(studioReferencesDirectory, `${key}.png`), buffer);
+                const transparent = await removeChromaBackground(buffer, chroma, { trim: false });
+                preparedStudioReferences.set(key, transparent);
+                checkpoint.capturedFrames += 1;
+                checkpoint.lastKey = key;
+                checkpoint.updatedAt = new Date().toISOString();
+                if (checkpoint.capturedFrames % 8 === 0) {
+                  const snapshot = JSON.stringify(checkpoint, null, 2);
+                  checkpointWrite = checkpointWrite.then(() => fs.writeFile(captureCheckpointPath, snapshot));
+                  await checkpointWrite;
+                }
+              },
               signal,
             });
+            await checkpointWrite;
+            await fs.writeFile(captureCheckpointPath, JSON.stringify({
+              ...checkpoint,
+              status: "captured",
+              capturedFrames: freshCapture.source.capturePipeline?.processedFrames
+                ?? checkpoint.capturedFrames,
+              pipeline: freshCapture.source.capturePipeline,
+              updatedAt: new Date().toISOString(),
+            }, null, 2));
             studioTurntable = mergeStudioCaptures({
               reusable: reusableStudioCapture,
               fresh: freshCapture,
@@ -517,11 +551,9 @@ export class JobManager {
                 code: "studio_direction_missing",
               });
             }
-            const transparentStudioReference = await removeChromaBackground(
-              studioReference,
-              chroma,
-              { trim: false },
-            );
+            const preparedReferenceKey = studioMotionReference ? frame.key : direction;
+            const transparentStudioReference = preparedStudioReferences.get(preparedReferenceKey)
+              ?? await removeChromaBackground(studioReference, chroma, { trim: false });
             studioCellTransform = await createStudioCellTransform(transparentStudioReference, job.input);
             studioSwimCellTransform = await createStudioSwimCellTransform(
               transparentStudioReference,
@@ -563,11 +595,8 @@ export class JobManager {
               },
             });
             try {
-              const transparentMotionReference = await removeChromaBackground(
-                studioMotionReference,
-                chroma,
-                { trim: false },
-              );
+              const transparentMotionReference = preparedStudioReferences.get(frame.key)
+                ?? await removeChromaBackground(studioMotionReference, chroma, { trim: false });
               cell = await renderStudioSpriteCell(
                 transparentMotionReference,
                 frame.clip.key.startsWith("swim") ? studioSwimCellTransform : studioCellTransform,
@@ -946,11 +975,14 @@ export class JobManager {
   }
 
   updateProgress(job, done, total, currentFrame) {
+    const localPixelPipeline = this.animation.engine === "deterministic";
     this.update(job, {
       status: "generating",
       progress: {
-        stage: "comfy",
-        message: `Frame ${done}/${total} terminado.`,
+        stage: localPixelPipeline ? "pixel-processing" : "comfy",
+        message: localPixelPipeline
+          ? `Sprite ${done}/${total} limpiado y pixelado.`
+          : `Frame ${done}/${total} terminado.`,
         done,
         total,
         percent: Math.min(94, 3 + Math.round((done / total) * 91)),
@@ -1094,6 +1126,9 @@ function mergeStudioCaptures({ reusable, fresh, recapturedClips, frameCounts }) 
     recapturedClips: [...recapturedClips],
     reusedClips,
     reusedFromJobId: reusable?.source?.reusedFromJobId ?? null,
+    capturePipeline: fresh?.source?.capturePipeline
+      ?? reusable?.source?.capturePipeline
+      ?? { mode: "disabled", window: 0, processedFrames: 0, failures: [] },
   };
   for (const clip of STUDIO_CAPTURED_ANIMATION_CLIP_KEYS) {
     const sourceTitle = clip.split("_").map((part) => `${part[0].toUpperCase()}${part.slice(1)}`).join("");

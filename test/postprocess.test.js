@@ -59,6 +59,36 @@ test("elimina chroma, recorta y crea una celda transparente", async () => {
   assert.equal(cellInfo.hasAlpha, true);
 });
 
+test("elimina el derrame magenta del antialias antes de cuantizar", async () => {
+  const width = 12;
+  const height = 12;
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const inside = x >= 3 && x <= 8 && y >= 3 && y <= 8;
+      const interior = x >= 4 && x <= 7 && y >= 4 && y <= 7;
+      const color = interior ? [8, 8, 10] : inside ? [128, 0, 128] : [255, 0, 255];
+      pixels[offset] = color[0];
+      pixels[offset + 1] = color[1];
+      pixels[offset + 2] = color[2];
+      pixels[offset + 3] = 255;
+    }
+  }
+  const raw = await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
+  const transparent = await removeChromaBackground(
+    raw,
+    { hex: "#FF00FF", rgb: [255, 0, 255] },
+    { trim: false },
+  );
+  const { data } = await sharp(transparent).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  for (let offset = 0; offset < data.length; offset += 4) {
+    if (data[offset + 3] <= 18) continue;
+    const magentaExcess = Math.min(data[offset], data[offset + 2]) - data[offset + 1];
+    assert.ok(magentaExcess <= 18, `quedó spill magenta en ${offset / 4}: ${magentaExcess}`);
+  }
+});
+
 test("elimina un píxel aislado sin borrar detalles conectados en diagonal", async () => {
   const source = await sharp({
     create: { width: 8, height: 8, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },

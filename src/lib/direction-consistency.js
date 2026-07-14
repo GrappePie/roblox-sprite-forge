@@ -106,15 +106,86 @@ export async function harmonizeSpritePalette(inputImages, options = {}) {
     .composite(entries.map(([, input], index) => ({ input, left: index * width, top: 0 })))
     .png({ palette: true, colours: colors, dither: 0, compressionLevel: 9 })
     .toBuffer();
+  const sharedPalette = await readOpaquePalette(strip);
 
-  await Promise.all(entries.map(async ([key], index) => {
-    const master = await sharp(strip)
+  await Promise.all(entries.map(async ([key, original], index) => {
+    const quantized = await sharp(strip)
       .extract({ left: index * width, top: 0, width, height })
-      .png({ palette: true, colours: colors, dither: 0, compressionLevel: 9 })
+      .png({ palette: false, compressionLevel: 9 })
       .toBuffer();
-    images.set(key, master);
+    images.set(key, await preserveWarmColorFamilies(original, quantized, sharedPalette));
   }));
   return images;
+}
+
+/**
+ * Evita que una paleta global convierta reflejos de piel cálida en gris/blanco.
+ * Sólo sustituye píxeles cuyo original era claramente cálido y cuya salida se
+ * volvió neutral; la ropa blanca original permanece intacta.
+ */
+export async function preserveWarmColorFamilies(original, quantized, palette = []) {
+  const [source, output] = await Promise.all([
+    sharp(original).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+    sharp(quantized).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+  ]);
+  if (source.info.width !== output.info.width || source.info.height !== output.info.height) {
+    return quantized;
+  }
+  const warmPalette = palette.filter(isWarmColor);
+  const fallbackPalette = warmPalette.length ? warmPalette : null;
+  for (let offset = 0; offset < output.data.length; offset += 4) {
+    if (source.data[offset + 3] <= 30 || output.data[offset + 3] <= 30) continue;
+    const sourceColor = [source.data[offset], source.data[offset + 1], source.data[offset + 2]];
+    const outputColor = [output.data[offset], output.data[offset + 1], output.data[offset + 2]];
+    if (!isWarmColor(sourceColor) || !isNeutralLight(outputColor)) continue;
+    if (colorDistanceSquared(sourceColor, outputColor) < 18 ** 2) continue;
+    const replacement = fallbackPalette
+      ? nearestColor(sourceColor, fallbackPalette)
+      : sourceColor;
+    output.data[offset] = replacement[0];
+    output.data[offset + 1] = replacement[1];
+    output.data[offset + 2] = replacement[2];
+  }
+  return sharp(output.data, {
+    raw: { width: output.info.width, height: output.info.height, channels: 4 },
+  }).png({ palette: false, compressionLevel: 9 }).toBuffer();
+}
+
+async function readOpaquePalette(input) {
+  const { data } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const colors = new Map();
+  for (let offset = 0; offset < data.length; offset += 4) {
+    if (data[offset + 3] <= 30) continue;
+    const key = `${data[offset]},${data[offset + 1]},${data[offset + 2]}`;
+    if (!colors.has(key)) colors.set(key, [data[offset], data[offset + 1], data[offset + 2]]);
+  }
+  return [...colors.values()];
+}
+
+function isWarmColor([red, green, blue]) {
+  return red >= 90 && red - green >= 12 && green - blue >= 8;
+}
+
+function isNeutralLight([red, green, blue]) {
+  return Math.max(red, green, blue) - Math.min(red, green, blue) <= 14
+    && (red + green + blue) / 3 >= 145;
+}
+
+function nearestColor(source, palette) {
+  let winner = palette[0];
+  let winnerDistance = Infinity;
+  for (const candidate of palette) {
+    const distance = colorDistanceSquared(source, candidate);
+    if (distance < winnerDistance) {
+      winner = candidate;
+      winnerDistance = distance;
+    }
+  }
+  return winner;
+}
+
+function colorDistanceSquared(left, right) {
+  return (left[0] - right[0]) ** 2 + (left[1] - right[1]) ** 2 + (left[2] - right[2]) ** 2;
 }
 
 async function normalizePair(masters, pair, options) {

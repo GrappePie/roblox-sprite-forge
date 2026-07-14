@@ -189,6 +189,12 @@ export async function removeChromaBackground(input, chroma, { trim = true } = {}
     }
   }
 
+  // El antialias de Studio mezcla el borde del avatar con el chroma antes de
+  // entregarnos la captura. Quitar sólo el alpha deja RGB magenta/verde dentro
+  // del contorno y la cuantización posterior lo convierte en píxeles sólidos.
+  // Reconstruimos esos bordes desde un color interior cercano y reducimos el
+  // spill restante antes de crear la paleta compartida.
+  despillChromaEdges(data, width, height, background, detected);
   removeTinyAlphaComponents(data, width, height);
   const opaqueCount = countOpaquePixels(data);
   if (opaqueCount < Math.max(12, pixels * 0.0002)) {
@@ -497,7 +503,9 @@ export async function measureSpriteTorsoAnchor(input) {
 
 export async function assembleSpriteSheet(frames, { cellSize, paletteColors }) {
   const size = clampInteger(cellSize, 16, 512, 64);
-  const colors = clampInteger(paletteColors, 8, 256, 64);
+  // Las celdas ya comparten una paleta armonizada. Volver a cuantizar la hoja
+  // completa puede convertir tonos cálidos poco frecuentes en gris/blanco.
+  void paletteColors;
   const composites = frames.map((frame) => ({
     input: frame.buffer,
     left: frame.column * size,
@@ -514,7 +522,7 @@ export async function assembleSpriteSheet(frames, { cellSize, paletteColors }) {
     },
   })
     .composite(composites)
-    .png({ palette: true, colours: colors, dither: 0, compressionLevel: 9 })
+    .png({ palette: false, compressionLevel: 9 })
     .toBuffer();
 }
 
@@ -613,6 +621,143 @@ function detectBorderColor(data, width, height, expected) {
     Math.round(winner.g / winner.count),
     Math.round(winner.b / winner.count),
   ];
+}
+
+function despillChromaEdges(data, width, height, background, chroma) {
+  const pixels = width * height;
+  const source = Buffer.from(data);
+  const edgeDistance = new Uint8Array(pixels);
+  edgeDistance.fill(15);
+  for (let pixel = 0; pixel < pixels; pixel += 1) {
+    if (background[pixel] || source[pixel * 4 + 3] <= 18) edgeDistance[pixel] = 0;
+  }
+
+  // Distancia Chebyshev aproximada al fondo en dos pasadas. Sólo necesitamos
+  // distinguir una banda de cuatro píxeles, así que saturamos pronto.
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x;
+      if (!edgeDistance[pixel]) continue;
+      let nearest = edgeDistance[pixel];
+      if (x > 0) nearest = Math.min(nearest, edgeDistance[pixel - 1] + 1);
+      if (y > 0) nearest = Math.min(nearest, edgeDistance[pixel - width] + 1);
+      if (x > 0 && y > 0) nearest = Math.min(nearest, edgeDistance[pixel - width - 1] + 1);
+      if (x + 1 < width && y > 0) nearest = Math.min(nearest, edgeDistance[pixel - width + 1] + 1);
+      edgeDistance[pixel] = Math.min(15, nearest);
+    }
+  }
+  for (let y = height - 1; y >= 0; y -= 1) {
+    for (let x = width - 1; x >= 0; x -= 1) {
+      const pixel = y * width + x;
+      if (!edgeDistance[pixel]) continue;
+      let nearest = edgeDistance[pixel];
+      if (x + 1 < width) nearest = Math.min(nearest, edgeDistance[pixel + 1] + 1);
+      if (y + 1 < height) nearest = Math.min(nearest, edgeDistance[pixel + width] + 1);
+      if (x + 1 < width && y + 1 < height) nearest = Math.min(nearest, edgeDistance[pixel + width + 1] + 1);
+      if (x > 0 && y + 1 < height) nearest = Math.min(nearest, edgeDistance[pixel + width - 1] + 1);
+      edgeDistance[pixel] = Math.min(15, nearest);
+    }
+  }
+
+  const maximumBand = 4;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x;
+      const distance = edgeDistance[pixel];
+      if (!distance || distance > maximumBand) continue;
+      const offset = pixel * 4;
+      if (source[offset + 3] <= 18) continue;
+
+      const targetDistance = Math.min(7, distance + 2);
+      const candidate = findInteriorColor(
+        source,
+        edgeDistance,
+        width,
+        height,
+        x,
+        y,
+        targetDistance,
+      );
+      let reconstructed = false;
+      if (candidate) {
+        const current = [source[offset], source[offset + 1], source[offset + 2]];
+        const currentDistance = Math.sqrt(squaredDistance(current, chroma));
+        const interiorDistance = Math.sqrt(squaredDistance(candidate, chroma));
+        if (interiorDistance > 40 && currentDistance < interiorDistance * 0.985) {
+          const alpha = Math.max(0.08, Math.min(1, currentDistance / interiorDistance));
+          const predicted = candidate.map((channel, index) => (
+            alpha * channel + (1 - alpha) * chroma[index]
+          ));
+          const residual = Math.sqrt(squaredDistance(current, predicted));
+          if (residual <= 72) {
+            data[offset] = candidate[0];
+            data[offset + 1] = candidate[1];
+            data[offset + 2] = candidate[2];
+            reconstructed = true;
+          }
+        }
+      }
+      if (!reconstructed) suppressChromaSpill(data, offset, chroma, distance, maximumBand);
+    }
+  }
+
+  // Algunas texturas UGC (sobre todo cabello con planos transparentes) dejan
+  // entrar el fondo por toda la superficie, no sólo por el contorno. Como el
+  // chroma se elige precisamente por ser lejano a la paleta del avatar, es
+  // seguro eliminar su dominante también en el interior visible.
+  for (let pixel = 0; pixel < pixels; pixel += 1) {
+    const offset = pixel * 4;
+    if (background[pixel] || data[offset + 3] <= 18) continue;
+    suppressChromaSpill(data, offset, chroma, 1, 1);
+  }
+}
+
+function findInteriorColor(source, edgeDistance, width, height, x, y, targetDistance) {
+  for (let radius = 1; radius <= 9; radius += 1) {
+    let winner = null;
+    let winnerSpatialDistance = Infinity;
+    const left = Math.max(0, x - radius);
+    const right = Math.min(width - 1, x + radius);
+    const top = Math.max(0, y - radius);
+    const bottom = Math.min(height - 1, y + radius);
+    for (let candidateY = top; candidateY <= bottom; candidateY += 1) {
+      for (let candidateX = left; candidateX <= right; candidateX += 1) {
+        if (Math.max(Math.abs(candidateX - x), Math.abs(candidateY - y)) !== radius) continue;
+        const pixel = candidateY * width + candidateX;
+        const offset = pixel * 4;
+        if (edgeDistance[pixel] < targetDistance || source[offset + 3] < 220) continue;
+        const spatialDistance = Math.hypot(candidateX - x, candidateY - y);
+        if (spatialDistance >= winnerSpatialDistance) continue;
+        winnerSpatialDistance = spatialDistance;
+        winner = [source[offset], source[offset + 1], source[offset + 2]];
+      }
+    }
+    if (winner) return winner;
+  }
+  return null;
+}
+
+function suppressChromaSpill(data, offset, chroma, distance, maximumBand) {
+  const maximum = Math.max(...chroma, 1);
+  const dominant = [];
+  const other = [];
+  for (let channel = 0; channel < 3; channel += 1) {
+    if (chroma[channel] >= maximum * 0.72) dominant.push(channel);
+    else other.push(channel);
+  }
+  if (!dominant.length || !other.length) return;
+  const dominantFloor = Math.min(...dominant.map((channel) => data[offset + channel]));
+  const otherCeiling = Math.max(...other.map((channel) => data[offset + channel]));
+  const excess = dominantFloor - otherCeiling;
+  if (excess <= 18) return;
+  const strength = Math.max(0.25, (maximumBand + 1 - distance) / maximumBand);
+  for (const channel of dominant) {
+    const share = chroma[channel] / maximum;
+    data[offset + channel] = Math.max(
+      0,
+      Math.round(data[offset + channel] - excess * strength * share),
+    );
+  }
 }
 
 async function safeTrim(input) {
