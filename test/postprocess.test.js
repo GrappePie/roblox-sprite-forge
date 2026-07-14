@@ -13,6 +13,7 @@ import {
   measureSpriteTorsoAnchor,
   preserveSmallFaceDetails,
   repairHeadTorsoConnection,
+  repairInternalAlphaHoles,
   repairTorsoHipPixels,
   removeIsolatedAlphaPixels,
   removeChromaBackground,
@@ -177,6 +178,30 @@ test("rellena píxeles incompletos de la cadera sin cerrar el espacio entre las 
   const data = await sharp(repaired).ensureAlpha().raw().toBuffer();
   assert.ok(data[(18 * width + 15) * 4 + 3] >= 220);
   assert.equal(data[(24 * width + 15) * 4 + 3], 0);
+});
+
+test("cierra perforaciones alfa internas sin rellenar entrantes ni separar las piernas", async () => {
+  const width = 24;
+  const height = 24;
+  const pixels = Buffer.alloc(width * height * 4);
+  for (let y = 2; y <= 14; y += 1) {
+    for (let x = 5; x <= 18; x += 1) pixels.set([184, 186, 190, 255], (y * width + x) * 4);
+  }
+  for (let y = 15; y <= 21; y += 1) {
+    for (let x = 6; x <= 9; x += 1) pixels.set([96, 98, 102, 255], (y * width + x) * 4);
+    for (let x = 14; x <= 17; x += 1) pixels.set([96, 98, 102, 255], (y * width + x) * 4);
+  }
+  for (const [x, y] of [[10, 8], [11, 8], [11, 9]]) {
+    pixels.fill(0, (y * width + x) * 4, (y * width + x) * 4 + 4);
+  }
+  pixels.fill(0, (10 * width + 5) * 4, (10 * width + 5) * 4 + 4);
+  const repaired = await repairInternalAlphaHoles(
+    await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer(),
+  );
+  const data = await sharp(repaired).ensureAlpha().raw().toBuffer();
+  assert.ok(data[(8 * width + 10) * 4 + 3] >= 220);
+  assert.equal(data[(10 * width + 5) * 4 + 3], 0);
+  assert.equal(data[(18 * width + 12) * 4 + 3], 0);
 });
 
 test("elimina un píxel aislado sin borrar detalles conectados en diagonal", async () => {

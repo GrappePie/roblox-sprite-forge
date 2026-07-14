@@ -273,6 +273,7 @@ export async function renderSpriteCell(input, {
   const cleaned = await removeIsolatedAlphaPixels(detailed);
   let repaired = repairHeadTorso ? await repairHeadTorsoConnection(cleaned) : cleaned;
   repaired = repairTorsoHip ? await repairTorsoHipPixels(repaired) : repaired;
+  repaired = await repairInternalAlphaHoles(repaired);
   return repaired;
 }
 
@@ -406,6 +407,7 @@ export async function renderStudioSpriteCell(input, transform, {
   const cleaned = await removeIsolatedAlphaPixels(detailed);
   let repaired = repairHeadTorso ? await repairHeadTorsoConnection(cleaned) : cleaned;
   repaired = repairTorsoHip ? await repairTorsoHipPixels(repaired) : repaired;
+  repaired = await repairInternalAlphaHoles(repaired);
   return repaired;
 }
 
@@ -819,6 +821,75 @@ function areHipBoundaryColorsCompatible(left, right) {
     && leftBrightness >= 135
     && rightBrightness >= 135
     && Math.abs(leftBrightness - rightBrightness) <= 180;
+}
+
+/**
+ * Cierra perforaciones alfa diminutas completamente rodeadas por el sprite.
+ * Los espacios conectados con el fondo se conservan, de modo que no une
+ * brazos, piernas, cabello, colas ni accesorios separados intencionalmente.
+ */
+export async function repairInternalAlphaHoles(input, { maximumArea = 6 } = {}) {
+  const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const pixelCount = info.width * info.height;
+  const visited = new Uint8Array(pixelCount);
+  const areaLimit = clampInteger(maximumArea, 1, 24, 6);
+  const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  let filled = 0;
+
+  for (let start = 0; start < pixelCount; start += 1) {
+    if (visited[start] || data[start * 4 + 3] >= 30) continue;
+    const component = [start];
+    visited[start] = 1;
+    let touchesEdge = false;
+
+    for (let cursor = 0; cursor < component.length; cursor += 1) {
+      const index = component[cursor];
+      const x = index % info.width;
+      const y = Math.floor(index / info.width);
+      if (x === 0 || y === 0 || x === info.width - 1 || y === info.height - 1) touchesEdge = true;
+      for (const [dx, dy] of neighbors) {
+        const nextX = x + dx;
+        const nextY = y + dy;
+        if (nextX < 0 || nextY < 0 || nextX >= info.width || nextY >= info.height) continue;
+        const next = nextY * info.width + nextX;
+        if (visited[next] || data[next * 4 + 3] >= 30) continue;
+        visited[next] = 1;
+        component.push(next);
+      }
+    }
+
+    if (touchesEdge || component.length > areaLimit) continue;
+    const boundaryColors = new Map();
+    for (const index of component) {
+      const x = index % info.width;
+      const y = Math.floor(index / info.width);
+      for (const [dx, dy] of neighbors) {
+        const nextX = x + dx;
+        const nextY = y + dy;
+        if (nextX < 0 || nextY < 0 || nextX >= info.width || nextY >= info.height) continue;
+        const offset = (nextY * info.width + nextX) * 4;
+        if (data[offset + 3] < 30) continue;
+        const key = `${data[offset]},${data[offset + 1]},${data[offset + 2]}`;
+        boundaryColors.set(key, (boundaryColors.get(key) ?? 0) + 1);
+      }
+    }
+    if (!boundaryColors.size) continue;
+    const [colorKey] = [...boundaryColors.entries()].sort((a, b) => b[1] - a[1])[0];
+    const color = colorKey.split(",").map(Number);
+    for (const index of component) {
+      const offset = index * 4;
+      data[offset] = color[0];
+      data[offset + 1] = color[1];
+      data[offset + 2] = color[2];
+      data[offset + 3] = 255;
+      filled += 1;
+    }
+  }
+
+  if (!filled) return Buffer.from(input);
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png({ palette: false, compressionLevel: 9 })
+    .toBuffer();
 }
 
 /** Elimina únicamente píxeles alfa completamente solos; conserva grupos y diagonales finas. */
