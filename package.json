@@ -1,0 +1,26 @@
+{
+  "name": "roblox-sprite-forge-local",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Genera hojas de sprites pixel art desde avatares públicos de Roblox con maestros canónicos y movimiento por pose local.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "doctor": "node scripts/doctor.js",
+    "studio:build": "node scripts/build-studio-atlas.js",
+    "studio:install": "node scripts/install-studio-prototype.js",
+    "check": "node scripts/check.js",
+    "test": "node --test",
+    "verify": "npm run check && npm test"
+  },
+  "dependencies": {
+    "archiver": "7.0.1",
+    "express": "5.2.1",
+    "sharp": "0.34.5"
+  },
+  "license": "MIT"
+}

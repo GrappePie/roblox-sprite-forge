@@ -1,0 +1,16 @@
+node_modules/
+.env
+data/generated/*
+!data/generated/.gitkeep
+data/debug/
+data/diagnostics/
+data/logs/
+data/runtime-verify.png
+data/*.log
+data/server-*.log
+runtime-logs/
+studio-prototype/qa/
+npm-debug.log*
+*.log
+.DS_Store
+Thumbs.db

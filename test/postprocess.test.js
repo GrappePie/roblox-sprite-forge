@@ -1,0 +1,280 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import sharp from "sharp";
+import {
+  alignSpriteCell,
+  alignSpriteTorsoToReference,
+  assembleSpriteSheet,
+  chooseChromaColor,
+  createAtlasData,
+  createPixelPreview,
+  createStudioCellTransform,
+  measureSpriteFootAnchor,
+  measureSpriteTorsoAnchor,
+  removeIsolatedAlphaPixels,
+  removeChromaBackground,
+  renderSpriteCell,
+  renderStudioSpriteCell,
+} from "../src/lib/postprocess.js";
+import { getFramePlan } from "../src/lib/prompt.js";
+
+async function createSyntheticFrame() {
+  return sharp({
+    create: {
+      width: 96,
+      height: 96,
+      channels: 4,
+      background: { r: 255, g: 0, b: 255, alpha: 1 },
+    },
+  })
+    .composite([
+      {
+        input: {
+          create: {
+            width: 28,
+            height: 50,
+            channels: 4,
+            background: { r: 20, g: 80, b: 220, alpha: 1 },
+          },
+        },
+        left: 34,
+        top: 30,
+      },
+    ])
+    .png()
+    .toBuffer();
+}
+
+test("elimina chroma, recorta y crea una celda transparente", async () => {
+  const raw = await createSyntheticFrame();
+  const transparent = await removeChromaBackground(raw, { hex: "#FF00FF", rgb: [255, 0, 255] });
+  const trimmedInfo = await sharp(transparent).metadata();
+  assert.ok(trimmedInfo.width <= 30);
+  assert.ok(trimmedInfo.height <= 52);
+
+  const cell = await renderSpriteCell(transparent, { cellSize: 64, paletteColors: 32 });
+  const cellInfo = await sharp(cell).metadata();
+  assert.equal(cellInfo.width, 64);
+  assert.equal(cellInfo.height, 64);
+  assert.equal(cellInfo.hasAlpha, true);
+});
+
+test("elimina un píxel aislado sin borrar detalles conectados en diagonal", async () => {
+  const source = await sharp({
+    create: { width: 8, height: 8, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  }).composite([
+    { input: { create: { width: 1, height: 1, channels: 4, background: "#ffffff" } }, left: 1, top: 1 },
+    { input: { create: { width: 1, height: 1, channels: 4, background: "#ffffff" } }, left: 4, top: 4 },
+    { input: { create: { width: 1, height: 1, channels: 4, background: "#ffffff" } }, left: 5, top: 5 },
+  ]).png().toBuffer();
+  const cleaned = await removeIsolatedAlphaPixels(source);
+  const { data } = await sharp(cleaned).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.equal(data[(1 * 8 + 1) * 4 + 3], 0);
+  assert.equal(data[(4 * 8 + 4) * 4 + 3], 255);
+  assert.equal(data[(5 * 8 + 5) * 4 + 3], 255);
+});
+
+test("ensambla la hoja, preview y atlas", async () => {
+  const transparent = await removeChromaBackground(await createSyntheticFrame(), {
+    hex: "#FF00FF",
+    rgb: [255, 0, 255],
+  });
+  const cell = await renderSpriteCell(transparent, { cellSize: 48, paletteColors: 32 });
+  const plan = getFramePlan();
+  const frames = plan.map((frame) => ({ ...frame, buffer: cell }));
+  const sheet = await assembleSpriteSheet(frames, { cellSize: 48, paletteColors: 32 });
+  const info = await sharp(sheet).metadata();
+  assert.equal(info.width, 192);
+  assert.equal(info.height, 2688);
+  const preview = await createPixelPreview(sheet, 4);
+  const previewInfo = await sharp(preview).metadata();
+  assert.equal(previewInfo.width, 768);
+  assert.equal(previewInfo.height, 10752);
+  const atlas = createAtlasData({ username: "YukiManju", cellSize: 48, frames });
+  assert.equal(Object.keys(atlas.frames).length, 224);
+  assert.equal(atlas.meta.size.h, 2688);
+  assert.equal(atlas.meta.directions.length, 8);
+  assert.equal(atlas.frames["down_idle_1.png"].duration, 1000);
+  assert.equal(atlas.frames["down_idle_alt_1.png"].duration, 1000);
+  assert.deepEqual(atlas.animations.down_idle, [
+    "down_idle_1.png",
+    "down_idle_2.png",
+    "down_idle_3.png",
+    "down_idle_4.png",
+  ]);
+  assert.deepEqual(atlas.animations.down_walk, [
+    "down_walk_1.png",
+    "down_walk_2.png",
+    "down_walk_3.png",
+    "down_walk_4.png",
+  ]);
+  assert.deepEqual(atlas.animations.down_run, [
+    "down_run_1.png",
+    "down_run_2.png",
+    "down_run_3.png",
+    "down_run_4.png",
+  ]);
+  assert.deepEqual(atlas.animations.down_jump, [
+    "down_jump_1.png",
+    "down_jump_2.png",
+    "down_jump_3.png",
+    "down_jump_4.png",
+  ]);
+  assert.deepEqual(atlas.animations.down_fall, [
+    "down_fall_1.png",
+    "down_fall_2.png",
+    "down_fall_3.png",
+    "down_fall_4.png",
+  ]);
+  assert.deepEqual(atlas.animations.down_climb, [
+    "down_climb_1.png",
+    "down_climb_2.png",
+    "down_climb_3.png",
+    "down_climb_4.png",
+  ]);
+  assert.deepEqual(atlas.animations.down_idle_alt, [
+    "down_idle_alt_1.png",
+    "down_idle_alt_2.png",
+    "down_idle_alt_3.png",
+    "down_idle_alt_4.png",
+  ]);
+});
+
+test("el atlas conserva cuatro segundos de idle al duplicarlo a 16 frames", () => {
+  const plan = getFramePlan({ framesPerAnimation: 8, idleFramesPerAnimation: 16 });
+  const frames = plan.map((frame) => ({ ...frame, buffer: Buffer.alloc(0) }));
+  const atlas = createAtlasData({ username: "YukiManju", cellSize: 128, frames });
+  assert.equal(Object.keys(atlas.frames).length, 576);
+  assert.equal(atlas.animations.down_idle.length, 16);
+  assert.equal(atlas.animations.down_walk.length, 8);
+  assert.equal(atlas.frames["down_idle_1.png"].duration, 250);
+  assert.equal(atlas.frames["down_idle_alt_1.png"].duration, 250);
+  assert.equal(atlas.meta.size.w, 2048);
+  assert.deepEqual(atlas.meta.frameCounts, {
+    idle: 16,
+    walk: 8,
+    run: 8,
+    jump: 8,
+    fall: 8,
+    climb: 8,
+    idle_alt: 16,
+  });
+});
+
+test("elige un chroma distinto cuando el avatar es magenta", async () => {
+  const avatar = await sharp({
+    create: { width: 32, height: 32, channels: 4, background: { r: 255, g: 0, b: 255, alpha: 1 } },
+  }).png().toBuffer();
+  const chroma = await chooseChromaColor(avatar);
+  assert.notEqual(chroma.hex, "#FF00FF");
+});
+
+test("ancla accesorios asimetricos por los pies y no por la caja completa", async () => {
+  const asymmetric = await sharp({
+    create: { width: 80, height: 80, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  }).composite([
+    { input: { create: { width: 36, height: 12, channels: 4, background: "#ffffff" } }, left: 20, top: 10 },
+    { input: { create: { width: 14, height: 50, channels: 4, background: "#333333" } }, left: 20, top: 18 },
+    { input: { create: { width: 12, height: 8, channels: 4, background: "#ffcc99" } }, left: 21, top: 66 },
+  ]).png().toBuffer();
+  const cell = await renderSpriteCell(asymmetric, { cellSize: 64, paletteColors: 32 });
+  const anchor = await measureSpriteFootAnchor(cell);
+  assert.equal(anchor.x, 33);
+  assert.equal(anchor.y, 61);
+});
+
+test("normaliza dos celdas desplazadas al mismo pivote de pies", async () => {
+  const createCell = (left) => sharp({
+    create: { width: 64, height: 64, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  }).composite([
+    { input: { create: { width: 12, height: 38, channels: 4, background: "#ff3366" } }, left, top: 23 },
+  ]).png().toBuffer();
+  const [leftCell, rightCell] = await Promise.all([
+    alignSpriteCell(await createCell(18), { cellSize: 64, paletteColors: 32 }),
+    alignSpriteCell(await createCell(34), { cellSize: 64, paletteColors: 32 }),
+  ]);
+  const [leftAnchor, rightAnchor] = await Promise.all([
+    measureSpriteFootAnchor(leftCell),
+    measureSpriteFootAnchor(rightCell),
+  ]);
+  assert.equal(leftAnchor.x, rightAnchor.x);
+  assert.equal(leftAnchor.y, rightAnchor.y);
+});
+
+test("estabiliza el torso horizontal contra idle sin borrar la zancada", async () => {
+  const createPose = (torsoLeft, forwardLegLeft, backLegLeft) => sharp({
+    create: { width: 64, height: 64, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  }).composite([
+    { input: { create: { width: 18, height: 26, channels: 4, background: "#663399" } }, left: torsoLeft, top: 15 },
+    { input: { create: { width: 6, height: 21, channels: 4, background: "#ffcc99" } }, left: forwardLegLeft, top: 40 },
+    { input: { create: { width: 6, height: 21, channels: 4, background: "#cc9966" } }, left: backLegLeft, top: 40 },
+  ]).png().toBuffer();
+
+  const idle = await createPose(23, 25, 33);
+  const stride = await createPose(30, 20, 40);
+  const stabilized = await alignSpriteTorsoToReference(stride, idle, {
+    cellSize: 64,
+    paletteColors: 32,
+  });
+  const [idleTorso, stabilizedTorso, strideFeet, stabilizedFeet] = await Promise.all([
+    measureSpriteTorsoAnchor(idle),
+    measureSpriteTorsoAnchor(stabilized),
+    measureSpriteFootAnchor(stride),
+    measureSpriteFootAnchor(stabilized),
+  ]);
+
+  assert.equal(stabilizedTorso.x, idleTorso.x);
+  assert.equal(stabilizedFeet.y, strideFeet.y);
+  assert.equal(stabilizedFeet.bounds.right - stabilizedFeet.bounds.left, strideFeet.bounds.right - strideFeet.bounds.left);
+});
+
+test("Studio aplica un único encuadre y conserva la elevación interna de la pose", async () => {
+  const createRegisteredPose = (legTop, legHeight, withArms = false) => sharp({
+    create: { width: 160, height: 140, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  }).composite([
+    { input: { create: { width: 24, height: 34, channels: 4, background: "#663399" } }, left: 68, top: 45 },
+    { input: { create: { width: 7, height: legHeight, channels: 4, background: "#ffcc99" } }, left: 70, top: legTop },
+    { input: { create: { width: 7, height: legHeight, channels: 4, background: "#cc9966" } }, left: 83, top: legTop },
+    ...(withArms ? [
+      { input: { create: { width: 34, height: 6, channels: 4, background: "#224466" } }, left: 34, top: 51 },
+      { input: { create: { width: 34, height: 6, channels: 4, background: "#224466" } }, left: 92, top: 51 },
+    ] : []),
+  ]).png().toBuffer();
+  const idle = await createRegisteredPose(78, 31);
+  const airborne = await createRegisteredPose(72, 17, true);
+  const options = { cellSize: 64, paletteColors: 32 };
+  const transform = await createStudioCellTransform(idle, options);
+  const [idleCell, airborneCell] = await Promise.all([
+    renderStudioSpriteCell(idle, transform, options),
+    renderStudioSpriteCell(airborne, transform, options),
+  ]);
+  const [idleTorso, airborneTorso, idleFeet, airborneFeet] = await Promise.all([
+    measureColorBounds(idleCell, [102, 51, 153]),
+    measureColorBounds(airborneCell, [102, 51, 153]),
+    measureSpriteFootAnchor(idleCell),
+    measureSpriteFootAnchor(airborneCell),
+  ]);
+  assert.deepEqual(airborneTorso, idleTorso);
+  assert.ok(airborneFeet.y < idleFeet.y);
+});
+
+async function measureColorBounds(input, color) {
+  const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const bounds = { left: info.width, right: -1, top: info.height, bottom: -1 };
+  for (let y = 0; y < info.height; y += 1) {
+    for (let x = 0; x < info.width; x += 1) {
+      const offset = (y * info.width + x) * 4;
+      if (
+        data[offset] !== color[0]
+        || data[offset + 1] !== color[1]
+        || data[offset + 2] !== color[2]
+        || data[offset + 3] < 8
+      ) continue;
+      bounds.left = Math.min(bounds.left, x);
+      bounds.right = Math.max(bounds.right, x);
+      bounds.top = Math.min(bounds.top, y);
+      bounds.bottom = Math.max(bounds.bottom, y);
+    }
+  }
+  return bounds.right >= bounds.left ? bounds : null;
+}

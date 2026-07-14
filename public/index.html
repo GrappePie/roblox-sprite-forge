@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Genera y prueba sprites pixel art de 8 direcciones desde avatares públicos de Roblox." />
+    <title>Sprite Forge · Roblox Character Lab</title>
+    <link rel="stylesheet" href="/styles.css?v=4" />
+  </head>
+  <body>
+    <div class="ambient-grid" aria-hidden="true"></div>
+    <main class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Sprite Forge, inicio">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span><strong>SPRITE/</strong>FORGE</span>
+        </a>
+        <div class="topbar-copy">
+          <span>Roblox character lab</span>
+          <span class="version-tag">IDLE + WALK + RUN + JUMP + FALL + CLIMB</span>
+        </div>
+        <div class="health-actions">
+          <div id="healthChip" class="status-chip pending">
+            <span class="status-dot"></span>
+            <span>Revisando GPU…</span>
+          </div>
+          <button id="refreshHealth" class="icon-control" type="button" title="Revisar conexión" aria-label="Revisar conexión">↻</button>
+        </div>
+      </header>
+
+      <section class="intro-row">
+        <div>
+          <p class="eyebrow">LOCAL PIPELINE / CANONICAL SPRITE / POSE MOTION</p>
+          <h1>Del avatar al juego.</h1>
+        </div>
+          <p>Genera idle, caminata, carrera, salto, caída y escalada con continuidad real en ocho direcciones, inspecciona cada píxel y prueba el movimiento antes de exportar.</p>
+      </section>
+
+      <section id="healthPanel" class="notice hidden" role="status"></section>
+
+      <div class="workspace">
+        <aside class="setup-panel">
+          <section class="setup-block">
+            <div class="block-title"><span>01</span><div><h2>Personaje</h2><p>Perfil público de Roblox</p></div></div>
+            <form id="avatarForm" class="lookup-form">
+              <label for="source">Usuario, ID o URL</label>
+              <div class="input-row">
+                <input id="source" name="source" value="@YukiManju" maxlength="180" autocomplete="off" spellcheck="false" />
+                <button id="lookupButton" class="button secondary compact" type="submit">Buscar</button>
+              </div>
+            </form>
+            <article id="avatarCard" class="avatar-card empty">
+              <div class="avatar-placeholder">?</div>
+              <div><strong>Sin personaje</strong><p>Busca un perfil para usarlo como referencia.</p></div>
+            </article>
+          </section>
+
+          <section class="setup-block config-block">
+            <div class="block-title"><span>02</span><div><h2>Generación</h2><p id="generationSummary">idle 16 · otros 8 · 8 direcciones · 576 frames</p></div></div>
+            <form id="generationForm" class="settings-grid">
+              <label>Tamaño final<select id="cellSize"><option value="48">48 × 48</option><option value="64" selected>64 × 64</option><option value="96">96 × 96</option><option value="128">128 × 128</option></select></label>
+              <label>Resolución IA<select id="renderResolution"><option value="512" selected>512 · rápida</option><option value="768">768 · detalle</option><option value="1024">1024 · máxima</option></select></label>
+              <label>Estilo<select id="style"><option value="handheld" selected>RPG portátil</option><option value="minimal">16-bit minimal</option><option value="detailed">32-bit detallado</option></select></label>
+              <label>Pasos<select id="steps"><option value="4" selected>4 · distilled</option><option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="12">12</option></select></label>
+              <label>Frames por animación<select id="framesPerAnimation"><option value="2">2 · borrador</option><option value="4">4 · compacto</option><option value="6">6 · suave</option><option value="8" selected>8 · recomendado</option></select></label>
+              <label>Paleta<select id="paletteColors"><option value="32">32 colores</option><option value="48">48 colores</option><option value="64" selected>64 colores</option><option value="96">96 colores</option><option value="128">128 colores</option></select></label>
+              <label>Semilla<div class="seed-row"><input id="seed" inputmode="numeric" placeholder="Aleatoria" /><button id="randomSeed" class="icon-control seed-control" type="button" title="Crear semilla" aria-label="Crear semilla aleatoria">↻</button></div></label>
+              <label class="full-width">Dirección artística<textarea id="notes" rows="3" maxlength="800" placeholder="Ej.: respeta los accesorios equipados, contorno oscuro, proporciones chibi…"></textarea></label>
+              <fieldset class="recapture-fieldset full-width">
+                <legend>Recapturar desde Studio</legend>
+                <p id="captureReuseLabel">Se reutilizarán las capturas existentes. Marca solo lo que quieras volver a capturar.</p>
+                <div class="clip-checks">
+                  <label><input type="checkbox" value="idle" data-recapture-clip />Idle</label>
+                  <label><input type="checkbox" value="walk" data-recapture-clip />Walk</label>
+                  <label><input type="checkbox" value="run" data-recapture-clip />Run</label>
+                  <label><input type="checkbox" value="jump" data-recapture-clip />Jump</label>
+                  <label><input type="checkbox" value="fall" data-recapture-clip />Fall</label>
+                  <label><input type="checkbox" value="climb" data-recapture-clip checked />Climb</label>
+                </div>
+              </fieldset>
+              <p class="local-note full-width"><span></span>Idle principal y alternativo usan 16 frames durante 4 segundos. Los demás clips conservan sus 8 capturas y solo se recapturan cuando los marcas.</p>
+              <p id="detailRecommendation" class="detail-recommendation full-width hidden"></p>
+              <div class="full-width action-row">
+                <button id="generateButton" class="button primary" type="submit" disabled><span>Generar set</span><small id="frameTotalLabel">576 frames</small></button>
+                <button id="cancelButton" class="button danger hidden" type="button">Cancelar</button>
+              </div>
+            </form>
+          </section>
+        </aside>
+
+        <section class="studio-panel">
+          <div class="studio-heading">
+            <div><p class="eyebrow">03 / PLAYGROUND</p><h2>Vista previa</h2></div>
+            <span class="keyboard-hint"><kbd>WASD</kbd> · <kbd>Shift</kbd> correr · <kbd>Espacio</kbd> saltar · <kbd>E</kbd> escalar</span>
+          </div>
+
+          <div id="emptyOutput" class="empty-output">
+            <div class="empty-orbit" aria-hidden="true"><span>↖</span><span>↑</span><span>↗</span><span>←</span><i></i><span>→</span><span>↙</span><span>↓</span><span>↘</span></div>
+            <strong>Tu personaje vivirá aquí</strong>
+            <p>Genera el set para caminar, correr, saltar y escalar en ocho direcciones y revisar las animaciones en contexto.</p>
+          </div>
+
+          <div id="progressView" class="progress-view hidden">
+            <div class="progress-header"><div><span>GENERANDO ATLAS</span><strong id="progressMessage">Preparando…</strong></div><b id="progressPercent">0%</b></div>
+            <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+            <div class="progress-sub"><p id="frameCounter">0 / 384 frames</p><span>Idle + locomoción + aire + escalada auténticos de Roblox</span></div>
+            <div id="frameGrid" class="frame-grid" aria-label="Progreso de frames"></div>
+          </div>
+
+          <div id="resultView" class="result-view hidden">
+            <div id="liveStage" class="live-stage" tabindex="0" aria-label="Escenario interactivo para probar el sprite">
+              <div class="stage-sky" aria-hidden="true"><i></i><i></i><i></i></div>
+              <div class="stage-ground" aria-hidden="true"></div>
+              <div id="pixelLadder" class="pixel-ladder" aria-label="Escalera pixel art interactiva">
+                <i class="ladder-rail left"></i><i class="ladder-rungs"></i><i class="ladder-rail right"></i>
+                <span>CLIMB<br /><b>E + W/S</b></span>
+              </div>
+              <img id="liveSprite" alt="Sprite animado controlable" draggable="false" />
+              <span class="stage-focus">Haz clic aquí y muévete</span>
+            </div>
+
+            <div class="playback-panel">
+              <div class="direction-pad" aria-label="Control de ocho direcciones">
+                <button data-direction="up_left" aria-label="Arriba izquierda">↖</button><button data-direction="up" aria-label="Arriba">↑</button><button data-direction="up_right" aria-label="Arriba derecha">↗</button>
+                <button data-direction="left" aria-label="Izquierda">←</button><span class="pad-center">8</span><button data-direction="right" aria-label="Derecha">→</button>
+                <button data-direction="down_left" aria-label="Abajo izquierda">↙</button><button data-direction="down" aria-label="Abajo">↓</button><button data-direction="down_right" aria-label="Abajo derecha">↘</button>
+              </div>
+              <div class="playback-copy"><span id="clipLabel">IDLE · DIRECCIÓN ACTUAL</span><strong id="directionLabel">Frente</strong><small id="frameLabel">down_idle_1.png</small></div>
+              <div class="playback-actions">
+                <button id="playToggle" class="button secondary" type="button">Pausar</button>
+                <button id="resetPlayer" class="button ghost" type="button">Centrar</button>
+                <button id="runToggle" class="button ghost run-toggle" type="button" aria-pressed="false">Correr</button>
+                <button id="climbToggle" class="button ghost climb-toggle" type="button" aria-pressed="false">Escalar</button>
+                <label>FPS <input id="previewSpeed" type="range" min="4" max="14" value="8" /><output id="speedValue">8</output></label>
+              </div>
+            </div>
+
+            <details class="sheet-drawer">
+              <summary><span><b>HOJA COMPLETA</b><small id="sheetSummary">8 × 48 · 384 frames</small></span><i>Ver atlas</i></summary>
+              <div class="sheet-inspector"><div class="checkerboard"><img id="sheetPreview" alt="Hoja de sprites generada" /></div><dl id="resultMeta" class="result-meta"></dl></div>
+            </details>
+
+            <div class="download-grid">
+              <a id="downloadZip" class="button primary" download>Descargar paquete <span>ZIP</span></a>
+              <a id="downloadSheet" class="button secondary" download>sheet.png</a>
+              <a id="downloadJson" class="button secondary" download>Atlas JSON</a>
+            </div>
+          </div>
+
+          <div id="errorView" class="error-view hidden" role="alert"></div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/app.js?v=10"></script>
+  </body>
+</html>

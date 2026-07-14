@@ -1,0 +1,26 @@
+ROBLOX SPRITE FORGE LOCAL · INICIO RÁPIDO
+
+1. Instala y abre ComfyUI.
+2. En Workflow Templates busca: Flux.2 Klein 4B Distilled: Image Edit
+3. Descarga los tres modelos que indica la plantilla.
+4. Instala Node.js 20.11 o superior.
+5. Abre una terminal en esta carpeta.
+
+   Windows:
+   npm ci
+   copy .env.example .env
+   npm run doctor
+   npm start
+
+   Linux:
+   npm ci
+   cp .env.example .env
+   npm run doctor
+   npm start
+
+6. Abre http://127.0.0.1:3000
+
+En Windows también puedes ejecutar scripts\start-windows.bat después de preparar ComfyUI.
+En Linux puedes ejecutar ./scripts/start-linux.sh.
+Los scripts download-models.ps1 y download-models.sh son opcionales.
+Lee README.md para la guía completa.
