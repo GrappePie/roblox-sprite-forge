@@ -4,6 +4,7 @@ import sharp from "sharp";
 import {
   CAPTURE_DIRECTIONS,
   StudioCaptureService,
+  cropStudioContactSheet,
   cropStudioViewport,
   extractToolImage,
   parseMcpResponse,
@@ -54,6 +55,20 @@ test("recorta el centro del viewport panorámico y entrega una referencia cuadra
   assert.equal(metadata.width, 64);
   assert.equal(metadata.height, 64);
   assert.equal(metadata.format, "png");
+});
+
+test("separa una cuadrícula de Studio en frames cuadrados", async () => {
+  const source = await sharp({
+    create: { width: 300, height: 100, channels: 3, background: "#ff00ff" },
+  }).png().toBuffer();
+  const frames = await cropStudioContactSheet(source, 32, 4, 2);
+  assert.equal(frames.length, 4);
+  for (const frame of frames) {
+    const metadata = await sharp(frame).metadata();
+    assert.equal(metadata.width, 32);
+    assert.equal(metadata.height, 32);
+    assert.equal(metadata.format, "png");
+  }
 });
 
 test("captura los dos idles equipados, locomoción, salto, caída y escalada", async () => {
@@ -144,10 +159,15 @@ test("captura los dos idles equipados, locomoción, salto, caída y escalada", a
   assert.equal(capture.source.jumpMotionSource, "equipped-roblox-animation");
   assert.equal(capture.source.fallMotionSource, "equipped-roblox-animation");
   assert.equal(capture.source.climbMotionSource, "equipped-roblox-animation");
-  assert.equal(calls.filter((call) => call.name === "capture_screenshot").length, 152);
+  assert.equal(calls.filter((call) => call.name === "capture_screenshot").length, 104);
   assert.equal(calls.filter((call) =>
     call.name === "eval_client_runtime" && call.args.code.includes("track.TimePosition")
-  ).length, 144);
+  ).length, 96);
+  assert.equal(capture.source.captureMethods.idle, "world-grid-batch");
+  assert.equal(capture.source.captureMethods.idle_alt, "world-grid-batch");
+  assert.equal(capture.source.captureMethods.walk, "sequential");
+  assert.equal(capture.source.screenshotCalls, 104);
+  assert.deepEqual(capture.source.batchFallbacks, []);
   const cameraSetup = calls.find((call) =>
     call.name === "eval_client_runtime" && call.args.code.includes("SpriteForgeCaptureCamera")
   );
@@ -191,4 +211,50 @@ test("recaptura únicamente los clips solicitados", async () => {
   assert.equal(capture.climbImages.size, 16);
   assert.deepEqual(capture.source.recapturedClips, ["climb"]);
   assert.equal(calls.filter((call) => call.name === "capture_screenshot").length, 16);
+});
+
+test("vuelve al capturador secuencial si Studio rechaza el lote", async () => {
+  const screenshot = await sharp({
+    create: { width: 24, height: 16, channels: 3, background: "#ff00ff" },
+  }).png().toBuffer();
+  const calls = [];
+  const asText = (value) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
+  const client = {
+    diagnose: async () => ({ ok: true, place: { name: "Pixel avatar", id: 1, running: true } }),
+    async callTool(name, args) {
+      calls.push({ name, args });
+      if (name === "solo_playtest") return asText({ running: true });
+      if (name === "capture_screenshot") {
+        return { content: [{ type: "image", mimeType: "image/png", data: screenshot.toString("base64") }] };
+      }
+      if (name === "eval_server_runtime" && args.code.includes("GetHumanoidDescriptionFromUserIdAsync")) {
+        return asText({ result: JSON.stringify({
+          animations: {},
+          resolvedAnimations: { IdleAnimation: "rbxassetid://111" },
+        }) });
+      }
+      if (name === "eval_server_runtime" && args.code.includes("SpriteForgeResolvedIdle")) {
+        return asText({ result: JSON.stringify({ ready: true, length: 1 }) });
+      }
+      if (name === "eval_client_runtime" && args.code.includes("SpriteForgeBatchCapture") && args.code.includes("rig:Clone")) {
+        throw new Error("batch unavailable");
+      }
+      return asText({ result: true });
+    },
+  };
+  const service = new StudioCaptureService({ client, format: "png", batchIdle: true });
+  const capture = await service.captureTurntable({
+    userId: 42,
+    renderResolution: 16,
+    chroma: { hex: "#FF00FF" },
+    framesPerAnimation: 2,
+    clips: ["idle"],
+  });
+
+  assert.equal(capture.idleImages.size, 16);
+  assert.equal(capture.idleAltImages.size, 0);
+  assert.equal(capture.source.captureMethods.idle, "sequential-fallback");
+  assert.equal(capture.source.screenshotCalls, 24);
+  assert.equal(capture.source.batchFallbacks.length, 1);
+  assert.equal(capture.source.batchFallbacks[0].clip, "idle");
 });

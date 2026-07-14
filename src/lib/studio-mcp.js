@@ -130,10 +130,11 @@ export class StudioMcpClient {
 }
 
 export class StudioCaptureService {
-  constructor({ client, format = "jpeg", quality = 96 }) {
+  constructor({ client, format = "jpeg", quality = 96, batchIdle = true }) {
     this.client = client;
     this.format = format;
     this.quality = quality;
+    this.batchIdle = batchIdle;
     this.active = false;
   }
 
@@ -189,6 +190,19 @@ export class StudioCaptureService {
         signal,
       );
 
+      let screenshotCalls = 0;
+      const takeScreenshot = async () => {
+        const screenshot = await this.client.callTool(
+          "capture_screenshot",
+          this.format === "png"
+            ? { format: "png" }
+            : { format: "jpeg", quality: this.quality },
+          signal,
+        );
+        screenshotCalls += 1;
+        return extractToolImage(screenshot);
+      };
+
       const selectedClips = new Set(clips);
       const images = new Map();
       if (selectedClips.has("idle")) {
@@ -198,14 +212,7 @@ export class StudioCaptureService {
             { code: buildSetAngleCode(angle) },
             signal,
           );
-          const screenshot = await this.client.callTool(
-            "capture_screenshot",
-            this.format === "png"
-              ? { format: "png" }
-              : { format: "jpeg", quality: this.quality },
-            signal,
-          );
-          const image = extractToolImage(screenshot);
+          const image = await takeScreenshot();
           images.set(direction, await cropStudioViewport(image.buffer, renderResolution));
         }
       }
@@ -219,6 +226,8 @@ export class StudioCaptureService {
         fall: new Map(),
         climb: new Map(),
       };
+      const captureMethods = {};
+      const batchFallbacks = [];
       const motionDefinitions = [
         { key: "idle", catalogKey: "IdleAnimation", selectionKey: "idle" },
         { key: "idle_alt", catalogKey: "IdleAltAnimation", selectionKey: "idle" },
@@ -241,26 +250,70 @@ export class StudioCaptureService {
           if (setup.ready) {
             const requestedFrameCount = frameCounts[motion.key] ?? framesPerAnimation;
             const frameCount = Math.max(2, Math.min(16, Math.trunc(Number(requestedFrameCount)) || 8));
-            for (const [direction, angle] of CAPTURE_DIRECTIONS) {
-              for (let frameIndex = 1; frameIndex <= frameCount; frameIndex += 1) {
-                const phase = (frameIndex - 1) / frameCount;
-                await this.client.callTool(
-                  "eval_client_runtime",
-                  { code: buildSetAngleAndMotionPhaseCode(angle, phase, motion.key) },
-                  signal,
+            const canBatch = this.batchIdle && ["idle", "idle_alt"].includes(motion.key);
+            let capturedAsBatch = false;
+            if (canBatch) {
+              try {
+                const gridSize = Math.ceil(Math.sqrt(frameCount));
+                for (const [direction, angle] of CAPTURE_DIRECTIONS) {
+                  let image;
+                  try {
+                    await this.client.callTool(
+                      "eval_client_runtime",
+                      { code: buildMotionBatchCode(angle, frameCount, motion.key, gridSize, rgb) },
+                      signal,
+                    );
+                    image = await takeScreenshot();
+                  } finally {
+                    await this.client.callTool(
+                      "eval_client_runtime",
+                      { code: buildMotionBatchCleanupCode() },
+                      signal,
+                    ).catch(() => {});
+                  }
+                  const frames = await cropStudioContactSheet(
+                    image.buffer,
+                    renderResolution,
+                    frameCount,
+                    gridSize,
+                  );
+                  frames.forEach((frame, index) => {
+                    motionImages[motion.key].set(
+                      `${direction}_${motion.key}_${index + 1}`,
+                      frame,
+                    );
+                  });
+                }
+                captureMethods[motion.key] = "world-grid-batch";
+                capturedAsBatch = true;
+              } catch (error) {
+                motionImages[motion.key].clear();
+                batchFallbacks.push({
+                  clip: motion.key,
+                  reason: error instanceof Error ? error.message : String(error),
+                });
+                console.warn(
+                  `[studio-${motion.key}-batch-fallback]`,
+                  error instanceof Error ? error.message : error,
                 );
-                const screenshot = await this.client.callTool(
-                  "capture_screenshot",
-                  this.format === "png"
-                    ? { format: "png" }
-                    : { format: "jpeg", quality: this.quality },
-                  signal,
-                );
-                const image = extractToolImage(screenshot);
-                motionImages[motion.key].set(
-                  `${direction}_${motion.key}_${frameIndex}`,
-                  await cropStudioViewport(image.buffer, renderResolution),
-                );
+              }
+            }
+            if (!capturedAsBatch) {
+              captureMethods[motion.key] = canBatch ? "sequential-fallback" : "sequential";
+              for (const [direction, angle] of CAPTURE_DIRECTIONS) {
+                for (let frameIndex = 1; frameIndex <= frameCount; frameIndex += 1) {
+                  const phase = (frameIndex - 1) / frameCount;
+                  await this.client.callTool(
+                    "eval_client_runtime",
+                    { code: buildSetAngleAndMotionPhaseCode(angle, phase, motion.key) },
+                    signal,
+                  );
+                  const image = await takeScreenshot();
+                  motionImages[motion.key].set(
+                    `${direction}_${motion.key}_${frameIndex}`,
+                    await cropStudioViewport(image.buffer, renderResolution),
+                  );
+                }
               }
             }
           }
@@ -306,6 +359,9 @@ export class StudioCaptureService {
           fallMotionSource: fallImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
           climbMotionSource: climbImages.size ? "equipped-roblox-animation" : "deterministic-fallback",
           recapturedClips: [...selectedClips],
+          captureMethods,
+          screenshotCalls,
+          batchFallbacks,
         },
       };
     } finally {
@@ -375,6 +431,46 @@ export async function cropStudioViewport(input, resolution) {
     .resize(resolution, resolution, { fit: "fill", kernel: sharp.kernel.lanczos3 })
     .png({ compressionLevel: 9 })
     .toBuffer();
+}
+
+export async function cropStudioContactSheet(input, resolution, frameCount, gridSize) {
+  const safeFrameCount = Math.max(1, Math.min(16, Math.trunc(Number(frameCount)) || 1));
+  const safeGridSize = Math.max(
+    1,
+    Math.min(4, Math.trunc(Number(gridSize)) || Math.ceil(Math.sqrt(safeFrameCount))),
+  );
+  if (safeFrameCount > safeGridSize * safeGridSize) {
+    throw new AppError("La cuadrícula de Studio no tiene suficientes celdas.", {
+      code: "studio_batch_grid_too_small",
+    });
+  }
+  const metadata = await sharp(input).metadata();
+  if (!metadata.width || !metadata.height) {
+    throw new AppError("La captura por lotes de Studio no tiene dimensiones válidas.", {
+      code: "studio_batch_invalid_dimensions",
+    });
+  }
+  const side = Math.min(metadata.width, metadata.height);
+  const sheetLeft = Math.max(0, Math.floor((metadata.width - side) / 2));
+  const sheetTop = Math.max(0, Math.floor((metadata.height - side) / 2));
+  return Promise.all(Array.from({ length: safeFrameCount }, async (_, index) => {
+    const column = index % safeGridSize;
+    const row = Math.floor(index / safeGridSize);
+    const x0 = Math.round((column * side) / safeGridSize);
+    const x1 = Math.round(((column + 1) * side) / safeGridSize);
+    const y0 = Math.round((row * side) / safeGridSize);
+    const y1 = Math.round(((row + 1) * side) / safeGridSize);
+    return sharp(input)
+      .extract({
+        left: sheetLeft + x0,
+        top: sheetTop + y0,
+        width: Math.max(1, x1 - x0),
+        height: Math.max(1, y1 - y0),
+      })
+      .resize(resolution, resolution, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
+  }));
 }
 
 function extractToolText(result) {
@@ -597,6 +693,7 @@ function buildClientCameraCode() {
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 _G.SpriteForgeCaptureAngle = 0
+_G.SpriteForgeCaptureFieldOfView = 30
 RunService:UnbindFromRenderStep("SpriteForgeCaptureCamera")
 local initialCamera = Workspace.CurrentCamera
 local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
@@ -625,7 +722,7 @@ RunService:BindToRenderStep("SpriteForgeCaptureCamera", Enum.RenderPriority.Came
     local radial = Vector3.new(math.sin(radians), 0, -math.cos(radians))
     local distance = _G.SpriteForgeCaptureDistance
     camera.CameraType = Enum.CameraType.Scriptable
-    camera.FieldOfView = 30
+    camera.FieldOfView = _G.SpriteForgeCaptureFieldOfView or 30
     camera.CFrame = CFrame.lookAt(target + radial * distance, target)
 end)
 RunService.RenderStepped:Wait()
@@ -715,11 +812,133 @@ RunService.RenderStepped:Wait()
 return true`;
 }
 
+function buildMotionBatchCode(angle, frameCount, clipKey, gridSize, rgb) {
+  const safeFrameCount = Math.max(2, Math.min(16, Math.trunc(Number(frameCount)) || 8));
+  const safeGridSize = Math.max(2, Math.min(4, Math.trunc(Number(gridSize)) || 4));
+  const motion = getMotionDefinition(clipKey);
+  return `
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
+local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
+local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+local expectedId = rig and rig:GetAttribute("SpriteForge${motion.title}AnimationId")
+local track = _G.SpriteForgeCapture${motion.title}Track
+if (not track or track.Length <= 0) and animator then
+    for _, candidate in ipairs(animator:GetPlayingAnimationTracks()) do
+        if candidate.Length > 0 and candidate.Animation and candidate.Animation.AnimationId == expectedId then
+            track = candidate
+            break
+        end
+    end
+end
+assert(rig and track and track.Length > 0, "Sprite Forge batch animation is unavailable")
+local previous = Workspace:FindFirstChild("SpriteForgeBatchCapture")
+if previous then previous:Destroy() end
+local folder = Instance.new("Folder")
+folder.Name = "SpriteForgeBatchCapture"
+folder.Parent = Workspace
+local angle = ${Number(angle)}
+local gridSize = ${safeGridSize}
+local baseTarget = _G.SpriteForgeCaptureTarget
+local distance = _G.SpriteForgeCaptureDistance
+assert(typeof(baseTarget) == "Vector3" and typeof(distance) == "number", "Sprite Forge camera is not calibrated")
+local radians = math.rad(angle)
+local radial = Vector3.new(math.sin(radians), 0, -math.cos(radians))
+local cameraFrame = CFrame.lookAt(baseTarget + radial * distance, baseTarget)
+local screenRight = cameraFrame.RightVector
+local screenUp = cameraFrame.UpVector
+local cellSpan = 2 * distance * math.tan(math.rad(15))
+local background = Instance.new("Part")
+background.Name = "ChromaBackground"
+background.Size = Vector3.new(cellSpan * gridSize * 2, cellSpan * gridSize * 2, 0.2)
+background.CFrame = CFrame.lookAt(
+    baseTarget - radial * distance * 0.75,
+    baseTarget + radial * distance,
+    screenUp
+)
+background.Anchored = true
+background.CanCollide = false
+background.CanTouch = false
+background.CanQuery = false
+background.CastShadow = false
+background.Material = Enum.Material.SmoothPlastic
+background.Reflectance = 0
+background.Color = Color3.fromRGB(${rgb.r}, ${rgb.g}, ${rgb.b})
+background.Parent = folder
+rig.Archivable = true
+track:AdjustSpeed(0)
+for frameIndex = 1, ${safeFrameCount} do
+    local phase = (frameIndex - 1) / ${safeFrameCount}
+    track.TimePosition = math.min(track.Length * phase, math.max(0, track.Length - 1 / 240))
+    RunService.RenderStepped:Wait()
+    RunService.RenderStepped:Wait()
+    local clone = rig:Clone()
+    clone.Name = string.format("Frame%02d", frameIndex)
+    for _, item in ipairs(clone:GetDescendants()) do
+        if item:IsA("BaseScript") then
+            item:Destroy()
+        elseif item:IsA("BasePart") then
+            item.CanCollide = false
+            item.CanTouch = false
+            item.CanQuery = false
+            item.CastShadow = false
+            item.LocalTransparencyModifier = 0
+        end
+    end
+    clone.Parent = folder
+    local column = (frameIndex - 1) % gridSize
+    local row = math.floor((frameIndex - 1) / gridSize)
+    local horizontal = (column - (gridSize - 1) / 2) * cellSpan
+    local vertical = ((gridSize - 1) / 2 - row) * cellSpan
+    local offset = screenRight * horizontal + screenUp * vertical
+    clone:PivotTo(CFrame.new(offset) * clone:GetPivot())
+end
+for _, item in ipairs(rig:GetDescendants()) do
+    if item:IsA("BasePart") then item.LocalTransparencyModifier = 1 end
+end
+_G.SpriteForgeCapture${motion.title}Track = track
+_G.SpriteForgeCaptureAngle = angle
+_G.SpriteForgeCaptureFieldOfView = math.deg(2 * math.atan(gridSize * math.tan(math.rad(15))))
+_G.SpriteForgeBatchActive = true
+RunService.RenderStepped:Wait()
+RunService.RenderStepped:Wait()
+RunService.RenderStepped:Wait()
+return {ready = true, frames = ${safeFrameCount}, gridSize = gridSize}`;
+}
+
+function buildMotionBatchCleanupCode() {
+  return `
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local folder = Workspace:FindFirstChild("SpriteForgeBatchCapture")
+if folder then folder:Destroy() end
+local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
+if rig then
+    for _, item in ipairs(rig:GetDescendants()) do
+        if item:IsA("BasePart") then item.LocalTransparencyModifier = 0 end
+    end
+end
+_G.SpriteForgeCaptureFieldOfView = 30
+_G.SpriteForgeBatchActive = nil
+RunService.RenderStepped:Wait()
+RunService.RenderStepped:Wait()
+return true`;
+}
+
 function buildClientCleanupCode() {
   return `
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 RunService:UnbindFromRenderStep("SpriteForgeCaptureCamera")
+local batch = Workspace:FindFirstChild("SpriteForgeBatchCapture")
+if batch then batch:Destroy() end
+local rig = Workspace:FindFirstChild("SpriteForgeCaptureRig")
+if rig then
+    for _, item in ipairs(rig:GetDescendants()) do
+        if item:IsA("BasePart") then item.LocalTransparencyModifier = 0 end
+    end
+end
 local camera = Workspace.CurrentCamera
 local previous = _G.SpriteForgeCapturePreviousCamera
 if camera and previous then
@@ -734,6 +953,8 @@ _G.SpriteForgeCapturePreviousCamera = nil
 _G.SpriteForgeCaptureAngle = nil
 _G.SpriteForgeCaptureTarget = nil
 _G.SpriteForgeCaptureDistance = nil
+_G.SpriteForgeCaptureFieldOfView = nil
+_G.SpriteForgeBatchActive = nil
 _G.SpriteForgeCaptureIdleTrack = nil
 _G.SpriteForgeCaptureIdleAltTrack = nil
 _G.SpriteForgeCaptureWalkTrack = nil

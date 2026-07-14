@@ -28,6 +28,7 @@ const studioCapture = studioClient
       client: studioClient,
       format: config.studio.format,
       quality: config.studio.quality,
+      batchIdle: config.studio.batchIdle,
     })
   : null;
 const jobs = new JobManager({
