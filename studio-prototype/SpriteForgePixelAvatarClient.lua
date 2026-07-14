@@ -70,6 +70,7 @@ type Controller = {
     nextIdleAltAt: number,
     swimPitchBand: string,
     swimMoving: boolean,
+    swimWorldForward: Vector3,
     planeCenterOffset: number,
     descendantConnection: RBXScriptConnection?,
     hiddenParts: { [BasePart]: number },
@@ -551,6 +552,13 @@ local function attachCharacter(player: Player, character: Model)
         canvas.Parent = surface
     end
 
+    local initialSwimForward = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+    if initialSwimForward.Magnitude < SWIM_DIRECTION_INPUT_EPSILON then
+        initialSwimForward = Vector3.new(0, 0, -1)
+    else
+        initialSwimForward = initialSwimForward.Unit
+    end
+
     local controller: Controller = {
         player = player,
         character = character,
@@ -573,6 +581,7 @@ local function attachCharacter(player: Player, character: Model)
         nextIdleAltAt = 6 + math.random() * 8,
         swimPitchBand = "level",
         swimMoving = false,
+        swimWorldForward = initialSwimForward,
         planeCenterOffset = planeCenterOffset,
         descendantConnection = nil,
         hiddenParts = {},
@@ -650,14 +659,16 @@ end
 local function getSwimViewDirection(controller: Controller, fallback: string): string
     local moveDirection = controller.humanoid.MoveDirection
     local horizontalIntent = Vector3.new(moveDirection.X, 0, moveDirection.Z)
-    if horizontalIntent.Magnitude < SWIM_DIRECTION_INPUT_EPSILON then
-        return fallback
+    if horizontalIntent.Magnitude >= SWIM_DIRECTION_INPUT_EPSILON then
+        controller.swimWorldForward = horizontalIntent.Unit
     end
     -- El rig R15 puede girar su HumanoidRootPart casi 180 grados durante el
     -- nado y la velocidad se desvía al rozar el fondo o el borde de la piscina.
     -- MoveDirection conserva la dirección que el jugador está ordenando, así
-    -- que evita inversiones y saltos entre horizontal y diagonal.
-    return getViewDirectionFromForward(controller.root.Position, horizontalIntent, fallback)
+    -- que evita inversiones y saltos entre horizontal y diagonal. En swim_idle
+    -- conservamos ese eje, pero lo volvemos a proyectar contra la cámara cada
+    -- frame para que orbitar horizontalmente seleccione los ocho perfiles.
+    return getViewDirectionFromForward(controller.root.Position, controller.swimWorldForward, fallback)
 end
 
 local function updateSwimPitchBand(controller: Controller, metadata: any): string
@@ -935,6 +946,16 @@ RunService:BindToRenderStep("SpriteForgePixelAvatarRender", Enum.RenderPriority.
             controller.idleAltElapsed = 0
             controller.idleAltActive = false
             controller.nextIdleAltAt = 6 + math.random() * 8
+        end
+        if not swimming then
+            local rootForward = Vector3.new(
+                controller.root.CFrame.LookVector.X,
+                0,
+                controller.root.CFrame.LookVector.Z
+            )
+            if rootForward.Magnitude >= SWIM_DIRECTION_INPUT_EPSILON then
+                controller.swimWorldForward = rootForward.Unit
+            end
         end
         local direction = if swimming
             then getSwimViewDirection(controller, controller.lastDirection)
