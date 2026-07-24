@@ -505,7 +505,8 @@ local function renderGarmentStructured(
 	target: buffer,
 	size: Vector2,
 	masks: { [string]: buffer },
-	palette: { Color3 }
+	palette: { Color3 },
+	panels: { OutfitAnalyzer.GarmentPanelDescriptor }
 ): (buffer, number)
 	local diagnostic = buffer.create(buffer.len(target))
 	local colors = palette
@@ -513,7 +514,7 @@ local function renderGarmentStructured(
 	fillMaskColor(target, size, masks.waistband, colors[1])
 	fillMaskColor(diagnostic, size, masks.waistband, colors[1])
 	local panelBounds = Raster.MaskBounds(masks.upperPanels, size)
-	local panelCount = math.clamp(#colors + 1, 4, 7)
+	local panelCount = math.clamp(if #panels > 0 then #panels else #colors + 1, 4, 7)
 	if panelBounds then
 		local width = math.floor(size.X)
 		for y = panelBounds.minY, panelBounds.maxY do
@@ -523,7 +524,8 @@ local function renderGarmentStructured(
 				if buffer.readu8(masks.upperPanels, pixelOffset + 3) == 0 then continue end
 				local normalizedX = (x - panelBounds.minX) / math.max(1, panelBounds.maxX - panelBounds.minX)
 				local panel = math.clamp(math.floor(normalizedX * panelCount) + 1, 1, panelCount)
-				local color = colors[(panel - 1) % #colors + 1]
+				local sourcePanel = panels[panel]
+				local color = if sourcePanel then sourcePanel.color else colors[(panel - 1) % #colors + 1]
 				if panel % 2 == 0 then color = color:Lerp(Color3.new(), 0.14 + expansion * 0.06) end
 				local red, green, blue = colorBytes(color)
 				Raster.SourceOverPixel(target, width, math.floor(size.Y), x, y, { r = red, g = green, b = blue, a = 255 })
@@ -652,7 +654,13 @@ function ProceduralChibiBody.Paint(
 	end
 	local garmentPixels = maskedSource(sourcePixels, sourceSize, analysis.lowerGarmentMask)
 	local lowerGarmentStructured, lowerGarmentPanelCount =
-		renderGarmentStructured(projected, size, masks, analysis.lowerGarment.palette)
+		renderGarmentStructured(
+			projected,
+			size,
+			masks,
+			analysis.lowerGarment.palette,
+			analysis.lowerGarmentPanels
+		)
 	metrics.lowerGarment = {
 		projectedPixels = Raster.CountMaskPixels(masks.skirt, size),
 		fallbackPixels = 0,
@@ -753,7 +761,18 @@ function ProceduralChibiBody.Paint(
 		analysis.lowerGarment,
 		false
 	)
-	local torsoSourceComponents = #OutfitAnalyzer.FindAccentComponents(sourcePixels, sourceSize, analysis.torso)
+	local torsoSourceAccents = OutfitAnalyzer.FindAccentComponents(sourcePixels, sourceSize, analysis.torso)
+	local torsoSourceComponents = #torsoSourceAccents
+	local torsoSourceAccentPixels = 0
+	local torsoRetainedAccentPixels = 0
+	local retainedTorsoComponents = 0
+	for _, component in torsoSourceAccents do
+		torsoSourceAccentPixels += #component.pixels
+		if #component.pixels > 2 and retainedTorsoComponents < 2 then
+			retainedTorsoComponents += 1
+			torsoRetainedAccentPixels += #component.pixels
+		end
+	end
 	local bootsStructured = buffer.create(buffer.len(projected))
 	Raster.CompositeBufferSourceOver(bootsStructured, leftBootStructured, size)
 	Raster.CompositeBufferSourceOver(bootsStructured, rightBootStructured, size)
@@ -773,6 +792,38 @@ function ProceduralChibiBody.Paint(
 			Color3.fromRGB(245, 245, 245)
 		)
 	end
+	local garmentSourceSubregions = buffer.create(buffer.len(projected))
+	for _, entry in {
+		{ analysis.waistbandSourceMask, masks.waistband, Color3.fromRGB(255, 214, 72) },
+		{ analysis.upperPanelsSourceMask, masks.upperPanels, Color3.fromRGB(92, 214, 145) },
+		{ analysis.lowerRuffleSourceMask, masks.lowerRuffle, Color3.fromRGB(186, 105, 255) },
+	} do
+		local sourceMask = entry[1] :: buffer
+		local destinationMask = entry[2] :: buffer
+		if Raster.CountMaskPixels(sourceMask, sourceSize) > 0 then
+			fillMaskColor(garmentSourceSubregions, size, destinationMask, entry[3] :: Color3)
+		end
+	end
+	local bootSubparts = cloneBuffer(bootsStructured)
+	for _, bootMask in { masks.leftBoot, masks.rightBoot } do
+		local bounds = Raster.MaskBounds(bootMask, size)
+		if bounds then
+			local height = bounds.maxY - bounds.minY + 1
+			for _, marker in {
+				{ 0.16, Color3.fromRGB(255, 220, 72) },
+				{ 0.78, Color3.fromRGB(91, 194, 255) },
+			} do
+				local y = bounds.minY + math.floor(height * (marker[1] :: number))
+				Raster.DrawLine(
+					bootSubparts,
+					size,
+					Vector2.new(bounds.minX, y),
+					Vector2.new(bounds.maxX, y),
+					marker[2] :: Color3
+				)
+			end
+		end
+	end
 	return projected, accented, finished, masks, lockedColors, metrics, {
 		lowerGarmentSkinRatio = analysis.lowerGarmentSkinRatio,
 		lowerGarmentCentralCoverage = analysis.lowerGarmentCentralCoverage,
@@ -783,7 +834,7 @@ function ProceduralChibiBody.Paint(
 		sleeveSequenceSimilarity = sleeveSimilarity(analysis.leftSleeve.bands, analysis.rightSleeve.bands),
 		torsoSourceComponents = torsoSourceComponents,
 		torsoRetainedComponents = metrics.torso.accentComponents,
-		torsoRemovedNoisePixels = math.max(0, torsoSourceComponents - metrics.torso.accentComponents),
+		torsoRemovedNoisePixels = math.max(0, torsoSourceAccentPixels - torsoRetainedAccentPixels),
 		lowerGarmentPanelCount = lowerGarmentPanelCount,
 		lowerGarmentFallbackPixels = 0,
 		lowerGarmentSkinPixelsRejected = analysis.metrics.lowerGarment.rejectedSkinSamples,
@@ -800,12 +851,18 @@ function ProceduralChibiBody.Paint(
 		TorsoDescriptor = torsoDescriptor,
 		TorsoStructured = torsoStructured,
 		LowerGarmentPalette = skirtSourceDiagnostic,
-		LowerGarmentSubregions = lowerGarmentStructured,
-		LowerGarmentSourceSubregions = skirtSourceDiagnostic,
+		LowerGarmentSubregions = garmentSourceSubregions,
+		LowerGarmentSourceSubregions = garmentSourceSubregions,
 		LowerGarmentPanelDescriptors = lowerGarmentPanelDescriptors,
 		LowerGarmentStructured = lowerGarmentStructured,
 		BootDescriptors = Raster.UnionMasks(masks.leftBoot, masks.rightBoot, size),
 		BootsStructured = bootsStructured,
+		TorsoSourceAccents = torsoDescriptor,
+		TorsoRetainedAccents = torsoStructured,
+		GarmentSourceSubregions = garmentSourceSubregions,
+		GarmentPanelDescriptors = lowerGarmentPanelDescriptors,
+		GarmentPanelsStructured = lowerGarmentStructured,
+		BootSubparts = bootSubparts,
 		AccentBudget = accented,
 		RegionColorBudget = projected,
 		BodyStructured = finished,

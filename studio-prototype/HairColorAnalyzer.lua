@@ -26,6 +26,17 @@ export type HairColors = {
 	rawIsolatedSecondaryPixels: number,
 	remainingIsolatedHighlightPixels: number,
 	remainingIsolatedSecondaryPixels: number,
+	massDescriptors: { HairMassDescriptor },
+}
+
+export type HairMassDescriptor = {
+	label: "Primary" | "Secondary" | "Highlight" | "Shadow",
+	coverage: number,
+	centroid: Vector2,
+	bounds: { minU: number, minV: number, maxU: number, maxV: number },
+	side: "Left" | "Center" | "Right",
+	zone: "Crown" | "Fringe" | "Side" | "Tips" | "Bottom",
+	confidence: number,
 }
 
 type Bucket = {
@@ -217,6 +228,58 @@ function HairColorAnalyzer.RegularizeHairLabelMap(
 	}
 end
 
+local function buildMassDescriptors(
+	labels: buffer,
+	size: Vector2,
+	bounds: { minX: number, minY: number, maxX: number, maxY: number },
+	colors: { Color3 }
+): { HairMassDescriptor }
+	local width = math.floor(size.X)
+	local boundsWidth = math.max(1, bounds.maxX - bounds.minX + 1)
+	local boundsHeight = math.max(1, bounds.maxY - bounds.minY + 1)
+	local descriptors: { HairMassDescriptor } = {}
+	local names: { "Primary" | "Secondary" | "Highlight" | "Shadow" } =
+		{ "Primary", "Secondary", "Highlight", "Shadow" }
+	local limits = { 1, 2, 2, 3 }
+	for labelIndex = 1, 4 do
+		local mask = buffer.create(buffer.len(labels))
+		for y = bounds.minY, bounds.maxY do
+			for x = bounds.minX, bounds.maxX do
+				if labelIndexAt(labels, width, x, y, colors) == labelIndex then
+					buffer.writeu8(mask, offset(width, x, y) + 3, 255)
+				end
+			end
+		end
+		local components = Raster.ConnectedComponents(mask, size, nil, 3, 8)
+		table.sort(components, function(left, right) return left.area > right.area end)
+		for componentIndex = 1, math.min(limits[labelIndex], #components) do
+			local component = components[componentIndex]
+			local u = (component.centroid.X - bounds.minX) / boundsWidth
+			local v = (component.centroid.Y - bounds.minY) / boundsHeight
+			local zone: "Crown" | "Side" | "Fringe" | "Tips" | "Bottom" = if v < 0.34 then "Crown"
+				elseif v > 0.78 then "Bottom"
+				elseif v > 0.64 then "Tips"
+				elseif u < 0.25 or u > 0.75 then "Side"
+				else "Fringe"
+			table.insert(descriptors, {
+				label = names[labelIndex],
+				coverage = component.area / math.max(1, boundsWidth * boundsHeight),
+				centroid = Vector2.new(u, v),
+				bounds = {
+					minU = (component.bounds.minX - bounds.minX) / boundsWidth,
+					minV = (component.bounds.minY - bounds.minY) / boundsHeight,
+					maxU = (component.bounds.maxX - bounds.minX) / boundsWidth,
+					maxV = (component.bounds.maxY - bounds.minY) / boundsHeight,
+				},
+				side = if u < 0.4 then "Left" elseif u > 0.6 then "Right" else "Center",
+				zone = zone,
+				confidence = math.clamp(component.area / math.max(3, boundsWidth * boundsHeight * 0.02), 0, 1),
+			})
+		end
+	end
+	return descriptors
+end
+
 function HairColorAnalyzer.Analyze(
 	pixels: buffer,
 	size: Vector2,
@@ -364,6 +427,7 @@ function HairColorAnalyzer.Analyze(
 			rawIsolatedSecondaryPixels = 0,
 			remainingIsolatedHighlightPixels = 0,
 			remainingIsolatedSecondaryPixels = 0,
+			massDescriptors = {},
 		}
 	end
 
@@ -535,6 +599,12 @@ function HairColorAnalyzer.Analyze(
 		hairCoreMask,
 		{ primary, secondary, highlight, shadow }
 	)
+	local massDescriptors = buildMassDescriptors(
+		labelMap,
+		size,
+		bounds,
+		{ primary, secondary, highlight, shadow }
+	)
 	local coreAspect = if corePixels > 0
 		then (coreMaxX - coreMinX + 1) / math.max(1, coreMaxY - coreMinY + 1)
 		else 0.78
@@ -562,6 +632,7 @@ function HairColorAnalyzer.Analyze(
 		rawIsolatedSecondaryPixels = labelMetrics.rawIsolatedSecondaryPixels,
 		remainingIsolatedHighlightPixels = labelMetrics.remainingIsolatedHighlightPixels,
 		remainingIsolatedSecondaryPixels = labelMetrics.remainingIsolatedSecondaryPixels,
+		massDescriptors = massDescriptors,
 	}
 end
 

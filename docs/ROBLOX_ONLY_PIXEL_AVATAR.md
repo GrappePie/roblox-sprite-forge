@@ -53,6 +53,12 @@ Roblox client. It uses the pixelized Roblox avatar as identity input, then:
   region with eight-neighbour connectivity, merges compatible 1–3 px
   fragments, pairs symmetric pieces and projects them inversely to seven
   canonical head anchors;
+- converts each retained accessory into a normalized occupancy descriptor
+  with contour, holes, aspect, orientation, symmetry and regional color roles;
+- renders distinctive accessories with their measured silhouette
+  (`ShapePreserving`), uses source-conditioned paired templates when useful
+  (`TemplateAssisted`) and reserves triangles/ellipses for unstable
+  observations (`PrimitiveFallback`);
 - composites accessories in independent back, side and front depth buffers;
 - retains a spatial hair-core and four-label color map so secondary hair
   distribution remains coherent instead of becoming a checker pattern;
@@ -103,6 +109,7 @@ ReplicatedStorage
     ├── HairColorAnalyzer
     ├── ProceduralChibiFace
     ├── ProceduralChibiHeadAnalyzer
+    ├── ProceduralChibiAccessory
     ├── ProceduralChibiHead
     ├── ProceduralChibiSelfTest
     └── ProceduralChibiRenderer
@@ -214,6 +221,10 @@ La regularización estructural añade `HairLabelMapRaw`,
 `FrontAccessoryAllowed`, `SideAccessoryAllowed`,
 `AccessorySelectedPerZone`, `AccessoryPairLayout`,
 `AccessoryCompositeBeforeClipping`, `AccessoryCompositeAfterClipping`,
+`AccessoryShapeOccupancy`, `AccessoryContours`, `AccessoryHoles`,
+`AccessoryColorRoles`, `AccessoryRenderModes`, `AccessoryShapePreserving`,
+`AccessoryTemplateAssisted`, `AccessoryPrimitiveFallback`,
+`AccessoryFinalLayout`,
 `SleeveBandDescriptors`, `SleevesStructured`, `LowerGarmentPalette`,
 `LowerGarmentSubregions` y `BodyStructured`. Los accesorios usan anchors
 normalizados, cuotas por zona y supresión de máximos no solapados. Los adornos
@@ -230,9 +241,15 @@ por área relativa, simplifican su paleta, preservan huecos y compiten por
 presupuestos de cobertura y colisión en el espacio destino. Las parejas
 comparten alineación estilística sin forzar tamaños idénticos.
 
+Las métricas separan los conteos `ShapePreserving`, `TemplateAssisted` y
+`PrimitiveFallback`; también informan huecos preservados o perdidos, error
+medio de aspecto y colores fuente/finales. Los buffers de diagnóstico son
+resultados raster reales, no alias del compuesto final.
+
 El cuerpo también se interpreta mediante descriptores: las bandas de manga se
 pintan en el eje local hombro-puño, el torso usa una base limpia más uno o dos
-emblemas, la falda genera entre cuatro y siete paneles y las botas se dividen
+emblemas, la falda divide primero la fuente en cintura, paneles y volante,
+conserva su secuencia regional al generar entre cuatro y siete paneles, y las botas se dividen
 en puño, caña y pie con recuperación de paleta por pareja. El límite de 48
 colores es un máximo; el finalizador puede detenerse antes cuando los buckets
 restantes pesan poco o son perceptualmente redundantes.

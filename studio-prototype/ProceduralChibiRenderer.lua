@@ -48,6 +48,15 @@ export type DebugStage =
 	| "AccessoryTargetLayout"
 	| "AccessorySimplified"
 	| "AccessoryCoverageBudget"
+	| "AccessoryShapeOccupancy"
+	| "AccessoryContours"
+	| "AccessoryHoles"
+	| "AccessoryColorRoles"
+	| "AccessoryRenderModes"
+	| "AccessoryShapePreserving"
+	| "AccessoryTemplateAssisted"
+	| "AccessoryPrimitiveFallback"
+	| "AccessoryFinalLayout"
 	| "AccessoryBackLayer"
 	| "AccessorySideLayer"
 	| "AccessoryFrontLayer"
@@ -61,13 +70,19 @@ export type DebugStage =
 	| "BodyStructured"
 	| "TorsoDescriptor"
 	| "TorsoStructured"
+	| "TorsoSourceAccents"
+	| "TorsoRetainedAccents"
 	| "SleeveLocalCoordinates"
 	| "SleeveBandsStructured"
 	| "LowerGarmentSourceSubregions"
 	| "LowerGarmentPanelDescriptors"
 	| "LowerGarmentStructured"
+	| "GarmentSourceSubregions"
+	| "GarmentPanelDescriptors"
+	| "GarmentPanelsStructured"
 	| "BootDescriptors"
 	| "BootsStructured"
+	| "BootSubparts"
 	| "AccentBudget"
 	| "RegionColorBudget"
 	| "HeadWithoutAccessories"
@@ -151,6 +166,15 @@ local VALID_STAGES: { [string]: boolean } = {
 	AccessoryTargetLayout = true,
 	AccessorySimplified = true,
 	AccessoryCoverageBudget = true,
+	AccessoryShapeOccupancy = true,
+	AccessoryContours = true,
+	AccessoryHoles = true,
+	AccessoryColorRoles = true,
+	AccessoryRenderModes = true,
+	AccessoryShapePreserving = true,
+	AccessoryTemplateAssisted = true,
+	AccessoryPrimitiveFallback = true,
+	AccessoryFinalLayout = true,
 	AccessoryBackLayer = true,
 	AccessorySideLayer = true,
 	AccessoryFrontLayer = true,
@@ -164,13 +188,19 @@ local VALID_STAGES: { [string]: boolean } = {
 	BodyStructured = true,
 	TorsoDescriptor = true,
 	TorsoStructured = true,
+	TorsoSourceAccents = true,
+	TorsoRetainedAccents = true,
 	SleeveLocalCoordinates = true,
 	SleeveBandsStructured = true,
 	LowerGarmentSourceSubregions = true,
 	LowerGarmentPanelDescriptors = true,
 	LowerGarmentStructured = true,
+	GarmentSourceSubregions = true,
+	GarmentPanelDescriptors = true,
+	GarmentPanelsStructured = true,
 	BootDescriptors = true,
 	BootsStructured = true,
+	BootSubparts = true,
 	AccentBudget = true,
 	RegionColorBudget = true,
 	HeadWithoutAccessories = true,
@@ -568,13 +598,19 @@ function ProceduralChibiRenderer.Create(
 			or stage == "BodyStructured"
 			or stage == "TorsoDescriptor"
 			or stage == "TorsoStructured"
+			or stage == "TorsoSourceAccents"
+			or stage == "TorsoRetainedAccents"
 			or stage == "SleeveLocalCoordinates"
 			or stage == "SleeveBandsStructured"
 			or stage == "LowerGarmentSourceSubregions"
 			or stage == "LowerGarmentPanelDescriptors"
 			or stage == "LowerGarmentStructured"
+			or stage == "GarmentSourceSubregions"
+			or stage == "GarmentPanelDescriptors"
+			or stage == "GarmentPanelsStructured"
 			or stage == "BootDescriptors"
 			or stage == "BootsStructured"
+			or stage == "BootSubparts"
 			or stage == "AccentBudget"
 			or stage == "RegionColorBudget" then
 			Raster.CompositeBufferSourceOver(outputPixels, bodyDebug[stage], outputSize)
@@ -641,6 +677,24 @@ function ProceduralChibiRenderer.Create(
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessorySimplified, outputSize)
 			elseif stage == "AccessoryCoverageBudget" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCoverageBudget, outputSize)
+			elseif stage == "AccessoryShapeOccupancy" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryShapeOccupancy, outputSize)
+			elseif stage == "AccessoryContours" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryContours, outputSize)
+			elseif stage == "AccessoryHoles" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryHoles, outputSize)
+			elseif stage == "AccessoryColorRoles" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryColorRoles, outputSize)
+			elseif stage == "AccessoryRenderModes" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryRenderModes, outputSize)
+			elseif stage == "AccessoryShapePreserving" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryShapePreserving, outputSize)
+			elseif stage == "AccessoryTemplateAssisted" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryTemplateAssisted, outputSize)
+			elseif stage == "AccessoryPrimitiveFallback" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryPrimitiveFallback, outputSize)
+			elseif stage == "AccessoryFinalLayout" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryFinalLayout, outputSize)
 			elseif stage == "AccessoryBackLayer" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.backAccessories, outputSize)
 			elseif stage == "AccessorySideLayer" then

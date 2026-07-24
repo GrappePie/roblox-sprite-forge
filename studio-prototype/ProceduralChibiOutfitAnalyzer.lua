@@ -46,6 +46,13 @@ export type RowProfile = {
 	width: number,
 }
 
+export type GarmentPanelDescriptor = {
+	startRatio: number,
+	endRatio: number,
+	color: Color3,
+	coverage: number,
+}
+
 export type OutfitAnalysis = {
 	torso: SourceRegion,
 	leftSleeve: SourceRegion,
@@ -62,6 +69,10 @@ export type OutfitAnalysis = {
 	centerX: number,
 	rows: { RowProfile },
 	lowerGarmentMask: buffer,
+	waistbandSourceMask: buffer,
+	upperPanelsSourceMask: buffer,
+	lowerRuffleSourceMask: buffer,
+	lowerGarmentPanels: { GarmentPanelDescriptor },
 	lowerGarmentSkinRatio: number,
 	lowerGarmentCentralCoverage: number,
 	metrics: { [string]: SourceRegionMetrics },
@@ -540,6 +551,49 @@ function ProceduralChibiOutfitAnalyzer.Analyze(
 		regions.lowerGarment.fallbackPrimary = garmentPalette[1]
 		regions.lowerGarment.fallbackSecondary = garmentPalette[2] or garmentPalette[1]
 	end
+	local waistbandSourceMask = buffer.create(buffer.len(centralGarmentMask))
+	local upperPanelsSourceMask = buffer.create(buffer.len(centralGarmentMask))
+	local lowerRuffleSourceMask = buffer.create(buffer.len(centralGarmentMask))
+	local garmentHeight = garment.bounds.maxY - garment.bounds.minY + 1
+	local waistbandEnd = garment.bounds.minY + math.max(1, math.floor(garmentHeight * 0.18))
+	local ruffleStart = garment.bounds.minY + math.floor(garmentHeight * 0.76)
+	for y = garment.bounds.minY, garment.bounds.maxY do
+		for x = garment.bounds.minX, garment.bounds.maxX do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(centralGarmentMask, pixelOffset + 3) == 0 then continue end
+			local targetMask = if y <= waistbandEnd then waistbandSourceMask
+				elseif y >= ruffleStart then lowerRuffleSourceMask
+				else upperPanelsSourceMask
+			buffer.writeu8(targetMask, pixelOffset + 3, 255)
+		end
+	end
+	local panelCount = math.clamp(math.max(4, #garmentPalette + 1), 4, 7)
+	local panels: { GarmentPanelDescriptor } = {}
+	for panelIndex = 1, panelCount do
+		local startRatio = (panelIndex - 1) / panelCount
+		local endRatio = panelIndex / panelCount
+		local panelMask = buffer.create(buffer.len(centralGarmentMask))
+		local minPanelX = garment.bounds.minX + math.floor(startRatio * garmentWidth)
+		local maxPanelX = garment.bounds.minX + math.ceil(endRatio * garmentWidth) - 1
+		for y = garment.bounds.minY, garment.bounds.maxY do
+			for x = minPanelX, math.min(garment.bounds.maxX, maxPanelX) do
+				local pixelOffset = offset(width, x, y)
+				if buffer.readu8(upperPanelsSourceMask, pixelOffset + 3) > 0 then
+					buffer.writeu8(panelMask, pixelOffset + 3, 255)
+				end
+			end
+		end
+		local panelPalette = paletteFromMask(pixels, size, panelMask, 1)
+		table.insert(panels, {
+			startRatio = startRatio,
+			endRatio = endRatio,
+			color = panelPalette[1]
+				or garmentPalette[(panelIndex - 1) % math.max(1, #garmentPalette) + 1]
+				or regions.lowerGarment.fallbackPrimary,
+			coverage = Raster.CountMaskPixels(panelMask, size)
+				/ math.max(1, (maxPanelX - minPanelX + 1) * garmentHeight),
+		})
+	end
 	return {
 		torso = regions.torso,
 		leftSleeve = regions.leftSleeve,
@@ -556,6 +610,10 @@ function ProceduralChibiOutfitAnalyzer.Analyze(
 		centerX = centerX,
 		rows = rows,
 		lowerGarmentMask = centralGarmentMask,
+		waistbandSourceMask = waistbandSourceMask,
+		upperPanelsSourceMask = upperPanelsSourceMask,
+		lowerRuffleSourceMask = lowerRuffleSourceMask,
+		lowerGarmentPanels = panels,
 		lowerGarmentSkinRatio = garmentSkin / math.max(1, garmentOpaque),
 		lowerGarmentCentralCoverage = centralPixels / math.max(1, garmentWidth * (garment.bounds.maxY - garment.bounds.minY + 1)),
 		metrics = metrics,

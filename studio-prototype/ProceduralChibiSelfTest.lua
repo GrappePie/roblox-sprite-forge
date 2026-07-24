@@ -1,6 +1,7 @@
 --!strict
 
 local Body = require(script.Parent:WaitForChild("ProceduralChibiBody"))
+local Accessory = require(script.Parent:WaitForChild("ProceduralChibiAccessory"))
 local Face = require(script.Parent:WaitForChild("ProceduralChibiFace"))
 local Finalizer = require(script.Parent:WaitForChild("ProceduralImageFinalizer"))
 local Head = require(script.Parent:WaitForChild("ProceduralChibiHead"))
@@ -257,6 +258,83 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	assert(#Raster.ConnectedComponents(diagonalMask, Vector2.new(8, 8), nil, 1, 4) == 2, "4-connectivity merged diagonal pixels")
 	assert(#Raster.ConnectedComponents(diagonalMask, Vector2.new(8, 8), nil, 1, 8) == 1, "8-connectivity split diagonal pixels")
 
+	local accessoryPixels = {}
+	for y = 2, 15 do
+		for x = 1, 18 do
+			local inLeftHole = x >= 4 and x <= 7 and y >= 6 and y <= 10
+			local inRightHole = x >= 12 and x <= 15 and y >= 5 and y <= 9
+			if inLeftHole or inRightHole then continue end
+			local accent = x >= 9 and x <= 11
+			table.insert(accessoryPixels, {
+				x = x,
+				y = y,
+				r = if accent then 242 else 70,
+				g = if accent then 184 else 94,
+				b = if accent then 54 else 218,
+				a = 255,
+			})
+		end
+	end
+	local accessoryCandidate = {
+		bounds = { minX = 1, minY = 2, maxX = 18, maxY = 15 },
+		area = #accessoryPixels,
+		centroid = Vector2.new(9.5, 8.5),
+		zone = "frontCenter",
+		kind = "Ornament",
+		pairId = nil,
+		confidence = 0.92,
+		colors = { Color3.fromRGB(70, 94, 218), Color3.fromRGB(242, 184, 54) },
+		component = {
+			bounds = { minX = 1, minY = 2, maxX = 18, maxY = 15 },
+			area = #accessoryPixels,
+			centroid = Vector2.new(9.5, 8.5),
+			pixels = accessoryPixels,
+		},
+	}
+	local accessoryDescriptor = Accessory.Describe(
+		accessoryCandidate,
+		{ minX = 0, minY = 0, maxX = 31, maxY = 31 }
+	)
+	assert(accessoryDescriptor.renderMode == "ShapePreserving", "Distinctive accessory did not preserve its shape")
+	assert(accessoryDescriptor.holeCount >= 2, "Accessory descriptor lost source holes")
+	assert(accessoryDescriptor.sourceColorCount >= 2, "Accessory descriptor collapsed source color roles")
+	local accessoryResult = Accessory.Render(
+		accessoryDescriptor,
+		Vector2.new(64, 64),
+		{ minX = 8, minY = 10, maxX = 43, maxY = 37 }
+	)
+	assert(accessoryResult.preservedHoles >= 2, "Shape-preserving accessory lost rendered holes")
+	assert(accessoryResult.lostHoles == 0, "Shape-preserving accessory reported lost holes")
+	assert(accessoryResult.finalColorCount >= 2, "Shape-preserving accessory lost regional colors")
+	assert(accessoryResult.aspectError < 0.15, "Shape-preserving accessory changed aspect ratio")
+	assert(countOpaque(accessoryResult.contours, Vector2.new(64, 64)) > 0, "Accessory contour debug buffer is empty")
+	assert(
+		countOpaque(accessoryResult.holes, Vector2.new(64, 64))
+			~= countOpaque(accessoryResult.renderMode, Vector2.new(64, 64)),
+		"Accessory debug buffers are indistinguishable"
+	)
+	local tinyCandidate = {
+		bounds = { minX = 2, minY = 2, maxX = 2, maxY = 2 },
+		area = 1,
+		centroid = Vector2.new(2, 2),
+		zone = "frontLeft",
+		kind = "Clip",
+		pairId = nil,
+		confidence = 0.1,
+		colors = { Color3.fromRGB(240, 90, 180) },
+		component = {
+			bounds = { minX = 2, minY = 2, maxX = 2, maxY = 2 },
+			area = 1,
+			centroid = Vector2.new(2, 2),
+			pixels = { { x = 2, y = 2, r = 240, g = 90, b = 180, a = 255 } },
+		},
+	}
+	assert(
+		Accessory.Describe(tinyCandidate, { minX = 0, minY = 0, maxX = 31, maxY = 31 }).renderMode
+			== "PrimitiveFallback",
+		"Unstable accessory did not use primitive fallback"
+	)
+
 	local source = { minX = 12, minY = 20, maxX = 91, maxY = 219 }
 	local bands = Raster.MakeBodyBands(source)
 	assert(bands.torso.maxY + 1 == bands.hips.minY, "Torso and hips overlap")
@@ -303,6 +381,10 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	assert(bodyMetrics.shoulderPixelsOverwritten == 0, "Shoulder repair overwrote valid texture")
 	assert(bodyMetrics.leftSleeveBandCount >= 4 and bodyMetrics.rightSleeveBandCount >= 4, "Structured sleeve bands were lost")
 	assert(bodyMetrics.lowerGarmentPanelCount >= 4 and bodyMetrics.lowerGarmentPanelCount <= 7, "Skirt panel budget was ignored")
+	assert(#analysis.lowerGarmentPanels == bodyMetrics.lowerGarmentPanelCount, "Source panel descriptors did not drive skirt geometry")
+	assert(Raster.CountMaskPixels(analysis.waistbandSourceMask, sourceSize) > 0, "Source waistband subregion is empty")
+	assert(Raster.CountMaskPixels(analysis.upperPanelsSourceMask, sourceSize) > 0, "Source upper-panel subregion is empty")
+	assert(Raster.CountMaskPixels(analysis.lowerRuffleSourceMask, sourceSize) > 0, "Source ruffle subregion is empty")
 	assert(bodyMetrics.rightBootFallbackRatio <= 0.2 or bodyMetrics.bootPairRecoveryUsed, "Right boot was not structurally recovered")
 	assert(countColorsInRows(projected, bodySize, masks.leftArm, 107, 154) >= 3, "Left shoulder was flattened")
 	assert(countColorsInRows(projected, bodySize, masks.rightArm, 107, 154) >= 3, "Right shoulder was flattened")
@@ -358,6 +440,7 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 		assert(headAnalysis.hair.primaryCoverage > 0.12, "Spatial primary hair coverage is too low")
 		assert(headAnalysis.hair.secondaryReliable, "Secondary tip color was not detected")
 		assert(headAnalysis.hair.secondaryCoverage >= 0.04, "Secondary coverage did not reach its limit")
+		assert(#headAnalysis.hair.massDescriptors > 0, "Hair mass descriptors are empty")
 		assert(
 			headAnalysis.metrics.accepted >= 2,
 			string.format(

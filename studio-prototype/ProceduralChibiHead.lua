@@ -1,6 +1,7 @@
 --!strict
 
 local Face = require(script.Parent:WaitForChild("ProceduralChibiFace"))
+local Accessory = require(script.Parent:WaitForChild("ProceduralChibiAccessory"))
 local HeadAnalyzer = require(script.Parent:WaitForChild("ProceduralChibiHeadAnalyzer"))
 local Raster = require(script.Parent:WaitForChild("ProceduralRaster"))
 
@@ -45,6 +46,13 @@ export type HeadMetrics = {
 	targetRejectedCount: number,
 	simplifiedAccessoryColors: number,
 	preservedAccessoryHoles: number,
+	lostAccessoryHoles: number,
+	shapePreservingCount: number,
+	templateAssistedCount: number,
+	primitiveFallbackCount: number,
+	averageAccessoryAspectError: number,
+	simplifiedSourceColors: number,
+	simplifiedFinalColors: number,
 	hairMassCount: number,
 	highlightMassCount: number,
 	shadowMassCount: number,
@@ -99,6 +107,15 @@ export type PaintResult = {
 	accessoryTargetLayout: buffer,
 	accessorySimplified: buffer,
 	accessoryCoverageBudget: buffer,
+	accessoryShapeOccupancy: buffer,
+	accessoryContours: buffer,
+	accessoryHoles: buffer,
+	accessoryColorRoles: buffer,
+	accessoryRenderModes: buffer,
+	accessoryShapePreserving: buffer,
+	accessoryTemplateAssisted: buffer,
+	accessoryPrimitiveFallback: buffer,
+	accessoryFinalLayout: buffer,
 	withoutAccessories: buffer,
 	composite: buffer,
 	masks: { [string]: buffer },
@@ -546,47 +563,6 @@ local function simplifiedComponent(accessory: HeadAnalyzer.AccessoryCandidate): 
 	}, #colors, holes
 end
 
-local function structuredPairedAccessory(
-	target: buffer,
-	size: Vector2,
-	bounds: Bounds,
-	accessory: HeadAnalyzer.AccessoryCandidate
-): number
-	local boundsWidth = bounds.maxX - bounds.minX + 1
-	local boundsHeight = bounds.maxY - bounds.minY + 1
-	local center = Vector2.new((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2)
-	local outerMask = buffer.create(buffer.len(target))
-	local innerMask = buffer.create(buffer.len(target))
-	if string.find(accessory.zone, "top", 1, true) then
-		Raster.FillPolygon(outerMask, size, {
-			Vector2.new(bounds.minX, bounds.maxY),
-			Vector2.new(center.X, bounds.minY),
-			Vector2.new(bounds.maxX, bounds.maxY),
-		})
-		Raster.FillPolygon(innerMask, size, {
-			Vector2.new(bounds.minX + boundsWidth * 0.24, bounds.maxY - boundsHeight * 0.16),
-			Vector2.new(center.X, bounds.minY + boundsHeight * 0.28),
-			Vector2.new(bounds.maxX - boundsWidth * 0.24, bounds.maxY - boundsHeight * 0.16),
-		})
-	else
-		Raster.FillEllipse(outerMask, size, center, Vector2.new(boundsWidth * 0.5, boundsHeight * 0.5))
-		Raster.FillEllipse(innerMask, size, center, Vector2.new(boundsWidth * 0.28, boundsHeight * 0.36))
-	end
-	local outerColor = accessory.colors[1] or Color3.fromRGB(45, 45, 58)
-	local innerColor = accessory.colors[2] or outerColor:Lerp(Color3.new(1, 1, 1), 0.28)
-	local darkest = math.huge
-	local mostSaturated = -1
-	for _, color in accessory.colors do
-		local luminance = color.R * 0.3 + color.G * 0.59 + color.B * 0.11
-		local saturation = math.max(color.R, color.G, color.B) - math.min(color.R, color.G, color.B)
-		if luminance < darkest then darkest, outerColor = luminance, color end
-		if saturation > mostSaturated then mostSaturated, innerColor = saturation, color end
-	end
-	fillMask(target, size, outerMask, outerColor)
-	fillMask(target, size, innerMask, innerColor)
-	return Raster.CountMaskPixels(outerMask, size)
-end
-
 local function projectAccessoriesStructured(
 	analysis: Analysis,
 	targetSize: Vector2,
@@ -603,6 +579,7 @@ local function projectAccessoriesStructured(
 	local usedArea, usedFrontArea = 0, 0
 	local layouts = {}
 	for index, accessory in analysis.accessories do
+		local descriptor = Accessory.Describe(accessory, analysis.sourceBounds)
 		local sourceRelativeArea = accessory.area / math.max(1, sourceArea)
 		local minimumArea, maximumArea = 0.01, 0.07
 		if accessory.kind == "Clip" then minimumArea, maximumArea = 0.006, 0.04 end
@@ -624,6 +601,7 @@ local function projectAccessoriesStructured(
 		table.insert(layouts, {
 			index = index,
 			accessory = accessory,
+			descriptor = descriptor,
 			sourceRelativeArea = sourceRelativeArea,
 			targetRelativeArea = targetRelativeArea,
 			scale = math.sqrt(targetRelativeArea / math.max(0.0001, sourceRelativeArea)),
@@ -665,29 +643,14 @@ local function projectAccessoriesStructured(
 		local distance = (math.abs((pair[1].bounds.minX + pair[1].bounds.maxX) / 2 - center)
 			+ math.abs((pair[2].bounds.minX + pair[2].bounds.maxX) / 2 - center)) / 2
 		local headWidth = headBounds.maxX - headBounds.minX + 1
-		local sharedAccent: Color3? = nil
-		local sharedAccentSaturation = -1
-		for _, pairedLayout in pair do
-			for _, color in pairedLayout.accessory.colors do
-				local saturation = math.max(color.R, color.G, color.B) - math.min(color.R, color.G, color.B)
-				if saturation > sharedAccentSaturation then
-					sharedAccentSaturation = saturation
-					sharedAccent = color
-				end
-			end
-		end
 		distance = math.clamp(
 			distance,
 			headWidth * 0.27,
 			headWidth * (if sidePair then 0.39 elseif topPair then 0.34 else 0.4)
 		)
 		for pairIndex, layout in pair do
-			if sharedAccent then layout.accessory.colors[2] = sharedAccent end
 			local ratio = math.clamp(math.sqrt(layout.sourceRelativeArea / math.max(0.0001, averageArea)), 0.925, 1.075)
-			local originalAspect = (layout.bounds.maxX - layout.bounds.minX + 1)
-				/ math.max(1, layout.bounds.maxY - layout.bounds.minY + 1)
-			if topPair then originalAspect = math.clamp(originalAspect, 0.82, 1.18) end
-			if sidePair then originalAspect = math.clamp(originalAspect, 0.68, 1.05) end
+			local originalAspect = math.clamp(layout.descriptor.sourceAspect, 0.35, 2.8)
 			local pairBaseHeight = math.max(
 				if string.find(layout.accessory.zone, "top", 1, true) then 12
 					elseif string.find(layout.accessory.zone, "side", 1, true) then 16
@@ -720,17 +683,41 @@ local function projectAccessoriesStructured(
 		local leftPair = if left.accessory.pairId then 1 else 0
 		local rightPair = if right.accessory.pairId then 1 else 0
 		if leftPair ~= rightPair then return leftPair > rightPair end
-		return left.accessory.confidence * math.sqrt(left.accessory.area)
-			> right.accessory.confidence * math.sqrt(right.accessory.area)
+		local function salience(layout: any): number
+			local descriptor = layout.descriptor
+			local modePenalty = if descriptor.renderMode == "PrimitiveFallback" then 0.18 else 0
+			return layout.sourceRelativeArea * 3
+				+ descriptor.contourComplexity * 0.34
+				+ math.min(0.3, descriptor.holeCount * 0.12)
+				+ math.min(0.22, #descriptor.colorRegions * 0.04)
+				+ (if layout.accessory.pairId then 0.28 else 0)
+				+ layout.accessory.confidence * 0.35
+				- modePenalty
+		end
+		return salience(left) > salience(right)
 	end)
 	local acceptedBounds = {}
 	local projected, fillTotal, repaired, clipped = 0, 0, 0, 0
-	local collisions, rejected, simplifiedColors, holes = 0, 0, 0, 0
+	local collisions, rejected, holes, lostHoles = 0, 0, 0, 0
+	local modeCounts = { ShapePreserving = 0, TemplateAssisted = 0, PrimitiveFallback = 0 }
+	local sourceColors, finalColors, aspectErrorTotal = 0, 0, 0
 	local maximumArea = 0
 	local sourceUsedArea = 0
 	local pairMetrics: { [number]: any } = {}
+	local diagnostics = {
+		shapeOccupancy = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+		contours = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+		holes = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+		colorRoles = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+		renderModes = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+		shapePreserving = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+		templateAssisted = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+		primitiveFallback = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+		finalLayout = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4),
+	}
 	for _, layout in layouts do
 		local accessory = layout.accessory
+		local descriptor = layout.descriptor
 		local bounds = layout.bounds
 		local area = boundsPixelArea(bounds)
 		local isFront = accessory.depth == "Front"
@@ -759,36 +746,46 @@ local function projectAccessoriesStructured(
 			end
 			if collided then continue end
 		end
-		local component, colorCount, preservedHoles = simplifiedComponent(accessory)
-		simplifiedColors += colorCount
-		holes += preservedHoles
-		local target = if accessory.depth == "Back" then backTarget
-			elseif accessory.depth == "Side" and accessory.kind == "Ear" then sideBackTarget
-			elseif accessory.depth == "Side" then sideFrontTarget else frontTarget
-		local temporary = buffer.create(buffer.len(target))
-		local projection
-		local structuralPair = accessory.pairId
-			and (string.find(accessory.zone, "top", 1, true) or string.find(accessory.zone, "side", 1, true))
-		if structuralPair then
-			local occupiedPixels = structuredPairedAccessory(temporary, targetSize, bounds, accessory)
-			projection = {
-				occupiedPixels = occupiedPixels,
-				fillRatio = occupiedPixels / math.max(1, area),
-				repairedPixels = 0,
-				clippedPixels = 0,
-			}
-		else
-			projection = Raster.ProjectComponentResampled(component, temporary, targetSize, bounds, { CloseRadius = 0 })
+		local rendered = Accessory.Render(descriptor, targetSize, bounds)
+		modeCounts[descriptor.renderMode] += 1
+		holes += rendered.preservedHoles
+		lostHoles += rendered.lostHoles
+		sourceColors += descriptor.sourceColorCount
+		finalColors += rendered.finalColorCount
+		aspectErrorTotal += rendered.aspectError
+		for key, diagnostic in diagnostics do
+			local sourceDiagnostic = if key == "shapeOccupancy" then rendered.occupancy
+				elseif key == "contours" then rendered.contours
+				elseif key == "holes" then rendered.holes
+				elseif key == "colorRoles" then rendered.colorRoles
+				elseif key == "renderModes" then rendered.renderMode
+				elseif key == "finalLayout" then rendered.pixels
+				elseif key == "shapePreserving" and descriptor.renderMode == "ShapePreserving" then rendered.pixels
+				elseif key == "templateAssisted" and descriptor.renderMode == "TemplateAssisted" then rendered.pixels
+				elseif key == "primitiveFallback" and descriptor.renderMode == "PrimitiveFallback" then rendered.pixels
+				else nil
+			if sourceDiagnostic then Raster.CompositeBufferSourceOver(diagnostic, sourceDiagnostic, targetSize) end
 		end
-		Raster.CompositeBufferSourceOver(target, temporary, targetSize)
-		if projection.occupiedPixels > 0 then projected += 1 end
+		if accessory.depth == "Side" then
+			Raster.CompositeBufferSourceOver(sideBackTarget, rendered.pixels, targetSize)
+			Raster.CompositeBufferSourceOver(sideFrontTarget, rendered.frontDetails, targetSize)
+		elseif accessory.depth == "Back" then
+			Raster.CompositeBufferSourceOver(backTarget, rendered.pixels, targetSize)
+		else
+			Raster.CompositeBufferSourceOver(frontTarget, rendered.pixels, targetSize)
+		end
+		local projection = {
+			occupiedPixels = rendered.occupiedPixels,
+			fillRatio = rendered.occupiedPixels / math.max(1, area),
+			repairedPixels = 0,
+			clippedPixels = 0,
+		}
+		if rendered.occupiedPixels > 0 then projected += 1 end
 		fillTotal += projection.fillRatio
-		repaired += projection.repairedPixels
-		clipped += projection.clippedPixels
-		usedArea += projection.occupiedPixels
+		usedArea += rendered.occupiedPixels
 		sourceUsedArea += accessory.area
 		if isFront then usedFrontArea += projection.occupiedPixels end
-		maximumArea = math.max(maximumArea, projection.occupiedPixels)
+		maximumArea = math.max(maximumArea, rendered.occupiedPixels)
 		table.insert(acceptedBounds, bounds)
 		if accessory.pairId then
 			local metric = pairMetrics[accessory.pairId] or {
@@ -830,8 +827,16 @@ local function projectAccessoriesStructured(
 		maximumArea = maximumArea,
 		collisions = collisions,
 		rejected = rejected,
-		simplifiedColors = simplifiedColors,
+		simplifiedColors = finalColors,
 		holes = holes,
+		lostHoles = lostHoles,
+		shapePreservingCount = modeCounts.ShapePreserving,
+		templateAssistedCount = modeCounts.TemplateAssisted,
+		primitiveFallbackCount = modeCounts.PrimitiveFallback,
+		averageAspectError = aspectErrorTotal / math.max(1, projected),
+		sourceColors = sourceColors,
+		finalColors = finalColors,
+		diagnostics = diagnostics,
 	}
 end
 
@@ -902,28 +907,58 @@ local function paintHairMasses(
 	local masses = buffer.create(buffer.len(backHair))
 	local headWidth = headBounds.maxX - headBounds.minX + 1
 	local headHeight = headBounds.maxY - headBounds.minY + 1
-	local secondaryCount = 0
-	if hair.secondaryReliable then
-		local secondaryLayer = buffer.create(buffer.len(backHair))
-		fillMask(secondaryLayer, size, masks.tips, hair.secondary)
-		Raster.CompositeBufferSourceOver(backHair, secondaryLayer, size)
-		Raster.CompositeBufferSourceOver(masses, secondaryLayer, size)
-		secondaryCount = 1
+	local secondaryCount, highlightCount, shadowCount = 0, 0, 0
+	local descriptors = hair.massDescriptors or {}
+	for _, descriptor in descriptors do
+		if descriptor.label == "Primary" or descriptor.confidence < 0.28 then continue end
+		if descriptor.label == "Secondary" and (not hair.secondaryReliable or secondaryCount >= 2) then continue end
+		if descriptor.label == "Highlight" and highlightCount >= 2 then continue end
+		if descriptor.label == "Shadow" and shadowCount >= 3 then continue end
+		local shape = buffer.create(buffer.len(backHair))
+		local bounds = descriptor.bounds
+		local center = Vector2.new(
+			headBounds.minX + (bounds.minU + bounds.maxU) * 0.5 * headWidth,
+			headBounds.minY + (bounds.minV + bounds.maxV) * 0.5 * headHeight
+		)
+		local radius = Vector2.new(
+			math.max(2, (bounds.maxU - bounds.minU) * headWidth * 0.58),
+			math.max(2, (bounds.maxV - bounds.minV) * headHeight * 0.58)
+		)
+		Raster.FillEllipse(shape, size, center, radius)
+		local targetMask = if descriptor.zone == "Fringe" then masks.frontHair else masks.backHair
+		shape = Raster.IntersectMasks(shape, targetMask, size)
+		local layer = buffer.create(buffer.len(backHair))
+		local color = if descriptor.label == "Secondary" then hair.secondary
+			elseif descriptor.label == "Highlight" then hair.highlight
+			else hair.shadow
+		fillMask(layer, size, shape, color)
+		Raster.CompositeBufferSourceOver(masses, layer, size)
+		if descriptor.zone == "Fringe" then
+			Raster.CompositeBufferSourceOver(frontHair, layer, size)
+		else
+			Raster.CompositeBufferSourceOver(backHair, layer, size)
+		end
+		if descriptor.label == "Secondary" then secondaryCount += 1
+		elseif descriptor.label == "Highlight" then highlightCount += 1
+		else shadowCount += 1 end
 	end
-	local highlightShape = buffer.create(buffer.len(backHair))
-	Raster.FillEllipse(
-		highlightShape,
-		size,
-		Vector2.new(headBounds.minX + headWidth * 0.48, headBounds.minY + headHeight * 0.23),
-		Vector2.new(headWidth * 0.2, headHeight * 0.08)
-	)
-	highlightShape = Raster.IntersectMasks(highlightShape, masks.backHair, size)
-	local highlightLayer = buffer.create(buffer.len(backHair))
-	fillMask(highlightLayer, size, highlightShape, hair.highlight)
-	Raster.CompositeBufferSourceOver(backHair, highlightLayer, size)
-	Raster.CompositeBufferSourceOver(masses, highlightLayer, size)
+	if highlightCount == 0 then
+		local highlightShape = buffer.create(buffer.len(backHair))
+		Raster.FillEllipse(
+			highlightShape, size,
+			Vector2.new(headBounds.minX + headWidth * 0.48, headBounds.minY + headHeight * 0.23),
+			Vector2.new(headWidth * 0.2, headHeight * 0.08)
+		)
+		highlightShape = Raster.IntersectMasks(highlightShape, masks.backHair, size)
+		local highlightLayer = buffer.create(buffer.len(backHair))
+		fillMask(highlightLayer, size, highlightShape, hair.highlight)
+		Raster.CompositeBufferSourceOver(backHair, highlightLayer, size)
+		Raster.CompositeBufferSourceOver(masses, highlightLayer, size)
+		highlightCount = 1
+	end
 
-	local bottomShadowMask = Raster.IntersectMasks(
+	local fallbackShadowMasks = {
+		Raster.IntersectMasks(
 		masks.backHair,
 		rectangleMask(size, {
 			minX = headBounds.minX,
@@ -932,8 +967,8 @@ local function paintHairMasses(
 			maxY = headBounds.maxY,
 		}),
 		size
-	)
-	local underFringeMask = Raster.IntersectMasks(
+		),
+		Raster.IntersectMasks(
 		masks.frontHair,
 		rectangleMask(size, {
 			minX = headBounds.minX + math.floor(headWidth * 0.17),
@@ -942,18 +977,22 @@ local function paintHairMasses(
 			maxY = headBounds.minY + math.floor(headHeight * 0.68),
 		}),
 		size
-	)
-	for _, shadowMask in { bottomShadowMask, underFringeMask } do
+		),
+	}
+	for index, shadowMask in fallbackShadowMasks do
+		if shadowCount >= 2 then break end
 		local shadowLayer = buffer.create(buffer.len(backHair))
 		fillMask(shadowLayer, size, shadowMask, hair.shadow)
 		Raster.CompositeBufferSourceOver(masses, shadowLayer, size)
-		if shadowMask == bottomShadowMask then
+		if index == 1 then
 			Raster.CompositeBufferSourceOver(backHair, shadowLayer, size)
 		else
 			Raster.CompositeBufferSourceOver(frontHair, shadowLayer, size)
 		end
+		shadowCount += 1
 	end
-	return masses, 1 + secondaryCount + 1 + 2, 1, 2, secondaryCount
+	return masses, 1 + secondaryCount + highlightCount + shadowCount,
+		highlightCount, shadowCount, secondaryCount
 end
 
 function ProceduralChibiHead.Paint(
@@ -1054,15 +1093,21 @@ function ProceduralChibiHead.Paint(
 	local anchorDiagnostic = diagnosticMasks(size, masks)
 	local accessoryCompositeAfterClipping = buffer.create(buffer.len(backHair))
 	Raster.CompositeBufferSourceOver(accessoryCompositeAfterClipping, accessories, size)
-	local hairMassDescriptors = cloneBuffer(hairColorMasses)
-	for index, color in { hair.primary, hair.secondary, hair.highlight, hair.shadow } do
-		Raster.DrawLine(
-			hairMassDescriptors,
-			size,
-			Vector2.new(headBounds.minX + 2, headBounds.minY + index * 2),
-			Vector2.new(headBounds.minX + 4 + index * 2, headBounds.minY + index * 2),
-			color
-		)
+	local hairMassDescriptors = buffer.create(buffer.len(hairColorMasses))
+	for _, descriptor in hair.massDescriptors or {} do
+		local color = if descriptor.label == "Primary" then hair.primary
+			elseif descriptor.label == "Secondary" then hair.secondary
+			elseif descriptor.label == "Highlight" then hair.highlight
+			else hair.shadow
+		local bounds = descriptor.bounds
+		local left = headBounds.minX + bounds.minU * (headBounds.maxX - headBounds.minX + 1)
+		local right = headBounds.minX + bounds.maxU * (headBounds.maxX - headBounds.minX + 1)
+		local top = headBounds.minY + bounds.minV * (headBounds.maxY - headBounds.minY + 1)
+		local bottom = headBounds.minY + bounds.maxV * (headBounds.maxY - headBounds.minY + 1)
+		Raster.DrawLine(hairMassDescriptors, size, Vector2.new(left, top), Vector2.new(right, top), color)
+		Raster.DrawLine(hairMassDescriptors, size, Vector2.new(right, top), Vector2.new(right, bottom), color)
+		Raster.DrawLine(hairMassDescriptors, size, Vector2.new(right, bottom), Vector2.new(left, bottom), color)
+		Raster.DrawLine(hairMassDescriptors, size, Vector2.new(left, bottom), Vector2.new(left, top), color)
 	end
 	local coverageBudget = buffer.create(buffer.len(backHair))
 	fillMask(
@@ -1113,6 +1158,15 @@ function ProceduralChibiHead.Paint(
 		accessoryTargetLayout = accessories,
 		accessorySimplified = accessoryCompositeBeforeClipping,
 		accessoryCoverageBudget = coverageBudget,
+		accessoryShapeOccupancy = accessoryProjection.diagnostics.shapeOccupancy,
+		accessoryContours = accessoryProjection.diagnostics.contours,
+		accessoryHoles = accessoryProjection.diagnostics.holes,
+		accessoryColorRoles = accessoryProjection.diagnostics.colorRoles,
+		accessoryRenderModes = accessoryProjection.diagnostics.renderModes,
+		accessoryShapePreserving = accessoryProjection.diagnostics.shapePreserving,
+		accessoryTemplateAssisted = accessoryProjection.diagnostics.templateAssisted,
+		accessoryPrimitiveFallback = accessoryProjection.diagnostics.primitiveFallback,
+		accessoryFinalLayout = accessoryProjection.diagnostics.finalLayout,
 		withoutAccessories = withoutAccessories,
 		composite = composite,
 		masks = masks,
@@ -1160,6 +1214,13 @@ function ProceduralChibiHead.Paint(
 			targetRejectedCount = accessoryProjection.rejected,
 			simplifiedAccessoryColors = accessoryProjection.simplifiedColors,
 			preservedAccessoryHoles = accessoryProjection.holes,
+			lostAccessoryHoles = accessoryProjection.lostHoles,
+			shapePreservingCount = accessoryProjection.shapePreservingCount,
+			templateAssistedCount = accessoryProjection.templateAssistedCount,
+			primitiveFallbackCount = accessoryProjection.primitiveFallbackCount,
+			averageAccessoryAspectError = accessoryProjection.averageAspectError,
+			simplifiedSourceColors = accessoryProjection.sourceColors,
+			simplifiedFinalColors = accessoryProjection.finalColors,
 			hairMassCount = hairMassCount,
 			highlightMassCount = highlightMassCount,
 			shadowMassCount = shadowMassCount,

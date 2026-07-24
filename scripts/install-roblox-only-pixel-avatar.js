@@ -85,6 +85,11 @@ await client.callTool("mass_create_objects", {
     {
       className: "ModuleScript",
       parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "ProceduralChibiAccessory",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
       name: "ProceduralChibiHead",
     },
     {
@@ -130,6 +135,10 @@ for (const [instancePath, filename] of [
   [
     "game.ReplicatedStorage.PixelAvatar.ProceduralChibiHeadAnalyzer",
     "ProceduralChibiHeadAnalyzer.lua",
+  ],
+  [
+    "game.ReplicatedStorage.PixelAvatar.ProceduralChibiAccessory",
+    "ProceduralChibiAccessory.lua",
   ],
   [
     "game.ReplicatedStorage.PixelAvatar.ProceduralChibiHead",

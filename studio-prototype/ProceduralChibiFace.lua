@@ -4,6 +4,16 @@ local Raster = require(script.Parent:WaitForChild("ProceduralRaster"))
 
 type Bounds = Raster.Bounds
 
+export type HairMassDescriptor = {
+	label: "Primary" | "Secondary" | "Highlight" | "Shadow",
+	coverage: number,
+	centroid: Vector2,
+	bounds: { minU: number, minV: number, maxU: number, maxV: number },
+	side: "Left" | "Center" | "Right",
+	zone: "Crown" | "Side" | "Fringe" | "Tips" | "Bottom",
+	confidence: number,
+}
+
 export type HairColors = {
 	primary: Color3,
 	secondary: Color3,
@@ -14,6 +24,7 @@ export type HairColors = {
 	secondaryReliable: boolean?,
 	leftTipSecondaryCoverage: number?,
 	rightTipSecondaryCoverage: number?,
+	massDescriptors: { HairMassDescriptor }?,
 }
 
 export type PaintedColors = {

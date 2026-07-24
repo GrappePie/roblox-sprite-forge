@@ -40,6 +40,10 @@ const proceduralHead = fs.readFileSync(
   "studio-prototype/ProceduralChibiHead.lua",
   "utf8",
 );
+const proceduralAccessory = fs.readFileSync(
+  "studio-prototype/ProceduralChibiAccessory.lua",
+  "utf8",
+);
 const hairColorAnalyzer = fs.readFileSync(
   "studio-prototype/HairColorAnalyzer.lua",
   "utf8",
@@ -207,7 +211,7 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralHead, /sourceRelativeArea/);
   assert.match(proceduralHead, /targetRelativeArea/);
   assert.match(proceduralHead, /projectAccessoriesStructured/);
-  assert.match(proceduralHead, /CloseRadius = 0/);
+  assert.match(proceduralHead, /Accessory\.Render/);
   assert.doesNotMatch(proceduralHead, /CompositeBufferSourceOver\(backHair,\s*labelBack/);
   assert.doesNotMatch(proceduralHead, /shiftX =/);
   assert.doesNotMatch(proceduralHead, /ClipToMask\(frontAccessories,\s*size,\s*masks\.frontHair\)/);
@@ -247,11 +251,25 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
     "TorsoStructured", "SleeveLocalCoordinates", "SleeveBandsStructured",
     "LowerGarmentSourceSubregions", "LowerGarmentPanelDescriptors",
     "LowerGarmentStructured", "BootDescriptors", "BootsStructured",
+    "AccessoryShapeOccupancy", "AccessoryContours", "AccessoryHoles",
+    "AccessoryColorRoles", "AccessoryRenderModes", "AccessoryShapePreserving",
+    "AccessoryTemplateAssisted", "AccessoryPrimitiveFallback", "AccessoryFinalLayout",
+    "TorsoSourceAccents", "TorsoRetainedAccents", "GarmentSourceSubregions",
+    "GarmentPanelDescriptors", "GarmentPanelsStructured", "BootSubparts",
     "AccentBudget", "RegionColorBudget", "FinalBeforePalette",
   ]) {
     assert.ok(proceduralChibi.includes(stage), `missing structured diagnostic: ${stage}`);
   }
   assert.doesNotMatch(hairColorAnalyzer, /primary = bucketColor\(buckets\[1\]\)/);
+  assert.match(hairColorAnalyzer, /massDescriptors/);
+  assert.match(proceduralAccessory, /ShapePreserving/);
+  assert.match(proceduralAccessory, /TemplateAssisted/);
+  assert.match(proceduralAccessory, /PrimitiveFallback/);
+  assert.match(proceduralAccessory, /holeMasks/);
+  assert.match(proceduralAccessory, /bilateralSymmetry/);
+  assert.match(proceduralAccessory, /contourComplexity/);
+  assert.match(proceduralHead, /Accessory\.Describe/);
+  assert.match(proceduralHead, /Accessory\.Render/);
   assert.match(proceduralChibi, /xpcall/);
   assert.match(proceduralChibi, /headImage:Destroy/);
   assert.match(proceduralChibi, /avatarImage:Destroy/);
@@ -313,6 +331,10 @@ test("procedural Luau self-test covers synthetic buffer behavior", () => {
   assert.match(proceduralSelfTest, /Simple image was forced to fill the 48-color maximum/);
   assert.match(proceduralSelfTest, /Accessory coverage budget was exceeded/);
   assert.match(proceduralSelfTest, /Hair renderer produced too many artistic masses/);
+  assert.match(proceduralSelfTest, /Distinctive accessory did not preserve its shape/);
+  assert.match(proceduralSelfTest, /Accessory descriptor lost source holes/);
+  assert.match(proceduralSelfTest, /Unstable accessory did not use primitive fallback/);
+  assert.match(proceduralSelfTest, /Source panel descriptors did not drive skirt geometry/);
 });
 
 test("procedural head owns its alpha and keeps copied pixels debug-only", () => {

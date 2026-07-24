@@ -558,6 +558,16 @@ local function regenerateThumbnail()
 					renderMetrics.head.preservedAccessoryHoles
 				))
 				print(string.format(
+					"[PixelAvatar] accessory modes shape=%d template=%d primitive=%d lostHoles=%d aspectError=%.3f colors=%d->%d",
+					renderMetrics.head.shapePreservingCount,
+					renderMetrics.head.templateAssistedCount,
+					renderMetrics.head.primitiveFallbackCount,
+					renderMetrics.head.lostAccessoryHoles,
+					renderMetrics.head.averageAccessoryAspectError,
+					renderMetrics.head.simplifiedSourceColors,
+					renderMetrics.head.simplifiedFinalColors
+				))
+				print(string.format(
 					"[PixelAvatar] hair masses=%d highlight=%d shadow=%d secondary=%d strands=%d rawIsolatedHighlight=%d rawIsolatedSecondary=%d remainingHighlight=%d remainingSecondary=%d",
 					renderMetrics.head.hairMassCount,
 					renderMetrics.head.highlightMassCount,
