@@ -25,6 +25,17 @@ return table.freeze({
 	ProceduralChibiAlphaThreshold = 48,
 	ProceduralChibiHeadHeightRatio = 0.41,
 	ProceduralChibiDebugStage = "Final",
+	ProceduralChibiRunSelfTest = true,
+	ProceduralChibiDebugStages = table.freeze({
+		"SourceBody",
+		"SourceRegions",
+		"BodyMasks",
+		"BodyProjected",
+		"BodyAccents",
+		"BeforeFace",
+		"BeforeFinalize",
+		"Final",
+	}),
 
 	DefaultMode = "ProceduralChibi",
 	Resolutions = table.freeze({

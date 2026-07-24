@@ -24,6 +24,10 @@ const proceduralBody = fs.readFileSync(
   "studio-prototype/ProceduralChibiBody.lua",
   "utf8",
 );
+const proceduralOutfitAnalyzer = fs.readFileSync(
+  "studio-prototype/ProceduralChibiOutfitAnalyzer.lua",
+  "utf8",
+);
 const proceduralFace = fs.readFileSync(
   "studio-prototype/ProceduralChibiFace.lua",
   "utf8",
@@ -62,6 +66,8 @@ test("Roblox-only pixel avatar keeps centralized requested settings", () => {
     "ProceduralChibiAlphaThreshold",
     "ProceduralChibiHeadHeightRatio",
     "ProceduralChibiDebugStage",
+    "ProceduralChibiRunSelfTest",
+    "ProceduralChibiDebugStages",
   ]) {
     assert.match(config, new RegExp(`\\b${setting}\\b`));
   }
@@ -117,7 +123,13 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralRaster, /SampleAreaPremultiplied/);
   assert.match(proceduralRaster, /premultipliedRed/);
   assert.match(proceduralRaster, /SourceOverPixel/);
+  assert.match(proceduralRaster, /ProjectRegionToMask/);
+  assert.match(proceduralRaster, /MaskBounds/);
+  assert.match(proceduralRaster, /FillPolygon/);
   assert.match(proceduralRaster, /MakeBodyBands/);
+  assert.match(proceduralOutfitAnalyzer, /rowProfiles/);
+  assert.match(proceduralOutfitAnalyzer, /FindAccentComponents/);
+  assert.match(proceduralOutfitAnalyzer, /midriffUsesSkin/);
   assert.match(proceduralBody, /CreateMasks/);
   assert.match(proceduralBody, /leftArm/);
   assert.match(proceduralBody, /rightLeg/);
@@ -128,6 +140,10 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralFace, /AccessoryLayer/);
   assert.match(proceduralChibi, /GetHumanoidDescriptionFromUserIdAsync/);
   assert.match(proceduralChibi, /SourceBody/);
+  assert.match(proceduralChibi, /SourceRegions/);
+  assert.match(proceduralChibi, /BodyMasks/);
+  assert.match(proceduralChibi, /BodyProjected/);
+  assert.match(proceduralChibi, /BodyAccents/);
   assert.match(proceduralChibi, /BodySingleCopy/);
   assert.match(proceduralChibi, /BodySegments/);
   assert.match(proceduralChibi, /BeforeFace/);
@@ -159,6 +175,9 @@ test("procedural image is finalized only after composition with locked colors", 
   assert.match(config, /ProceduralChibiHeadHeightRatio = 0\.41/);
   assert.match(controller, /OutlineEnabled = outlineEnabled/);
   assert.match(controller, /requestedColors=%d finalColors=%d stage=%s/);
+  assert.match(controller, /\[ProceduralChibiSelfTest\] PASS/);
+  assert.match(controller, /RunService:IsStudio\(\)/);
+  assert.match(config, /ProceduralChibiRunSelfTest = true/);
 });
 
 test("procedural Luau self-test covers synthetic buffer behavior", () => {
@@ -168,6 +187,10 @@ test("procedural Luau self-test covers synthetic buffer behavior", () => {
   assert.match(proceduralSelfTest, /Legs touch at center/);
   assert.match(proceduralSelfTest, /FaceLayer did not create alpha/);
   assert.match(proceduralSelfTest, /Final color count exceeded requested limit/);
+  assert.match(proceduralSelfTest, /Yellow torso symbol was lost/);
+  assert.match(proceduralSelfTest, /Left arm is not angled outward/);
+  assert.match(proceduralSelfTest, /outside canonical masks/);
+  assert.match(proceduralSelfTest, /fallback ratio is unreasonable/);
 });
 
 test("thumbnail pipeline performs real raster reduction and nearest-neighbor display", () => {

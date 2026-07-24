@@ -10,6 +10,7 @@ local Config = require(packageFolder:WaitForChild("PixelAvatarConfig"))
 local Utils = require(packageFolder:WaitForChild("PixelAvatarUtils"))
 local ThumbnailPixelator = require(packageFolder:WaitForChild("ThumbnailPixelator"))
 local ProceduralChibiRenderer = require(packageFolder:WaitForChild("ProceduralChibiRenderer"))
+local ProceduralChibiSelfTest = require(packageFolder:WaitForChild("ProceduralChibiSelfTest"))
 
 type Mode = "Original" | "Thumbnail" | "ProceduralChibi" | "Experimental" | "Retro3D"
 type Session = {
@@ -65,6 +66,7 @@ local modeButtons: { [Mode]: TextButton } = {} :: any
 local resolutionButtons: { [number]: TextButton } = {}
 local rateButtons: { [number]: TextButton } = {}
 local outlineButton: TextButton
+local stageButton: TextButton
 local thumbnailFrame: Frame
 local thumbnailLabel: ImageLabel
 local thumbnailImage: EditableImage? = nil
@@ -72,8 +74,10 @@ local thumbnailError: string? = nil
 local thumbnailLoading = false
 local thumbnailGeneration = 0
 local thumbnailRenderedMode: Mode? = nil
-local THUMBNAIL_PREVIEW_MAX = 480
+local selfTestError: string? = nil
+local THUMBNAIL_PREVIEW_MAX = 512
 local previewTitle: TextLabel
+local proceduralDebugStage = Config.ProceduralChibiDebugStage
 
 local MODE_LABELS: { [Mode]: string } = {
 	Original = "Original",
@@ -148,7 +152,7 @@ local function createPanel()
 	panel.Name = "Panel"
 	panel.AnchorPoint = Vector2.new(0, 1)
 	panel.Position = UDim2.new(0, 18, 1, -18)
-	panel.Size = UDim2.fromOffset(610, 367)
+	panel.Size = UDim2.fromOffset(610, 405)
 	panel.BackgroundColor3 = Color3.fromRGB(13, 17, 24)
 	panel.BackgroundTransparency = 0.06
 	panel.BorderSizePixel = 0
@@ -215,13 +219,19 @@ local function createPanel()
 		rateButtons[index] = button
 	end
 
+	local stageRow = makeRow(content, 32)
+	stageRow.LayoutOrder = 6
+	local stagePrefix = makeLabel(stageRow, "Etapa chibi:", 26)
+	stagePrefix.Size = UDim2.fromOffset(100, 26)
+	stageButton = makeButton(stageRow, proceduralDebugStage, 190)
+
 	statusTechnique = makeLabel(content, "Técnica: preparando...", 28)
-	statusTechnique.LayoutOrder = 6
+	statusTechnique.LayoutOrder = 7
 	statusTechnique.TextColor3 = Color3.fromRGB(139, 235, 198)
 	statusMetrics = makeLabel(content, "FPS: -- | partes: -- | actualización: --", 28)
-	statusMetrics.LayoutOrder = 7
+	statusMetrics.LayoutOrder = 8
 	statusWarning = makeLabel(content, "", 50)
-	statusWarning.LayoutOrder = 8
+	statusWarning.LayoutOrder = 9
 	statusWarning.TextColor3 = Color3.fromRGB(255, 196, 112)
 
 	local note = makeLabel(
@@ -229,14 +239,14 @@ local function createPanel()
 		"La réplica es solo visual: no controla físicas, colisiones, salud ni lógica.",
 		34
 	)
-	note.LayoutOrder = 9
+	note.LayoutOrder = 10
 	note.TextColor3 = Color3.fromRGB(145, 158, 177)
 
 	thumbnailFrame = Instance.new("Frame")
 	thumbnailFrame.Name = "ThumbnailPixelPreview"
 	thumbnailFrame.AnchorPoint = Vector2.new(1, 0.5)
 	thumbnailFrame.Position = UDim2.new(1, -24, 0.5, 0)
-	thumbnailFrame.Size = UDim2.fromOffset(510, 550)
+	thumbnailFrame.Size = UDim2.fromOffset(300, 570)
 	thumbnailFrame.BackgroundColor3 = Color3.fromRGB(13, 17, 24)
 	thumbnailFrame.BackgroundTransparency = 0.06
 	thumbnailFrame.BorderSizePixel = 0
@@ -323,6 +333,10 @@ local function refreshButtonStyles()
 			then Color3.fromRGB(25, 117, 132)
 			else Color3.fromRGB(31, 39, 54)
 	end
+	stageButton.Text = proceduralDebugStage
+	stageButton.BackgroundColor3 = if mode == "ProceduralChibi"
+		then Color3.fromRGB(80, 70, 34)
+		else Color3.fromRGB(48, 52, 61)
 end
 
 local function refreshStatus()
@@ -370,6 +384,9 @@ local function refreshStatus()
 		statusTechnique.Text = "Técnica: réplica visual retro 3D sincronizada"
 		statusWarning.Text =
 			"Simulación retro 3D: paleta/material simplificados y contorno; conserva texturas y accesorios."
+	end
+	if selfTestError then
+		statusWarning.Text = "ProceduralChibiSelfTest FALLÓ: " .. selfTestError
 	end
 
 	statusMetrics.Text = string.format(
@@ -428,7 +445,7 @@ local function regenerateThumbnail()
 					AlphaThreshold = Config.ProceduralChibiAlphaThreshold,
 					OutlineColor = Config.OutlineColor,
 					OutlineEnabled = outlineEnabled,
-					DebugStage = Config.ProceduralChibiDebugStage,
+					DebugStage = proceduralDebugStage,
 				})
 			end
 			return ThumbnailPixelator.Create(localPlayer.UserId, thumbnailOptions)
@@ -448,7 +465,7 @@ local function regenerateThumbnail()
 				then Config.ProceduralChibiSize
 				else resolution
 			print(string.format(
-				"[PixelAvatar] image ready mode=%s userId=%d size=%dx%d requestedColors=%d finalColors=%d stage=%s outline=%d",
+				"[PixelAvatar] image ready mode=%s userId=%d size=%dx%d requestedColors=%d finalColors=%d stage=%s fallback=%d accents=%d outline=%d",
 				requestedMode,
 				localPlayer.UserId,
 				renderedSize.X,
@@ -462,8 +479,35 @@ local function regenerateThumbnail()
 				if requestedMode == "ProceduralChibi" and renderMetrics
 					then renderMetrics.stage
 					else "Final",
+				if requestedMode == "ProceduralChibi" and renderMetrics
+					then renderMetrics.totalFallbackPixels
+					else 0,
+				if requestedMode == "ProceduralChibi" and renderMetrics
+					then renderMetrics.accentComponents
+					else 0,
 				if outlineEnabled then Config.ThumbnailOutlineRadius else 0
 			))
+			if requestedMode == "ProceduralChibi" and renderMetrics then
+				for regionName, regionMetrics in renderMetrics.regions do
+					local fallbackRatio = regionMetrics.fallbackPixels
+						/ math.max(1, regionMetrics.projectedPixels)
+					print(string.format(
+						"[PixelAvatar] region=%s projected=%d fallback=%d rejectedSkin=%d accents=%d",
+						regionName,
+						regionMetrics.projectedPixels,
+						regionMetrics.fallbackPixels,
+						regionMetrics.rejectedSkinPixels,
+						regionMetrics.accentComponents
+					))
+					if fallbackRatio > 0.3 then
+						warn(string.format(
+							"[PixelAvatar] high regional fallback region=%s ratio=%.2f",
+							regionName,
+							fallbackRatio
+						))
+					end
+				end
+			end
 		else
 			local detail = tostring(result)
 			if string.find(detail, "not accessible", 1, true) then
@@ -806,6 +850,21 @@ local function updateSessions()
 end
 
 createPanel()
+if RunService:IsStudio() and Config.ProceduralChibiRunSelfTest then
+	local selfTestOk, selfTestResult = pcall(ProceduralChibiSelfTest.Run)
+	if selfTestOk then
+		print(string.format(
+			"[ProceduralChibiSelfTest] PASS colors=%d fallback=%d accents=%d",
+			selfTestResult.finalColors,
+			selfTestResult.fallbackPixels,
+			selfTestResult.accentComponents
+		))
+	else
+		selfTestError = tostring(selfTestResult)
+		statusWarning.Text = "ProceduralChibiSelfTest FALLÓ: " .. selfTestError
+		warn("[ProceduralChibiSelfTest] FAIL: " .. tostring(selfTestResult))
+	end
+end
 for candidate, button in modeButtons do
 	table.insert(globalConnections, button.Activated:Connect(function()
 		mode = candidate
@@ -818,6 +877,16 @@ table.insert(globalConnections, outlineButton.Activated:Connect(function()
 		regenerateThumbnail()
 	end
 	applyMode()
+end))
+table.insert(globalConnections, stageButton.Activated:Connect(function()
+	local currentIndex = table.find(Config.ProceduralChibiDebugStages, proceduralDebugStage) or 0
+	local nextIndex = currentIndex % #Config.ProceduralChibiDebugStages + 1
+	proceduralDebugStage = Config.ProceduralChibiDebugStages[nextIndex]
+	if mode == "ProceduralChibi" then
+		regenerateThumbnail()
+	end
+	refreshButtonStyles()
+	refreshStatus()
 end))
 for index, button in resolutionButtons do
 	table.insert(globalConnections, button.Activated:Connect(function()

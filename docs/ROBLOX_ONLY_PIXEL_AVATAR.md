@@ -35,12 +35,16 @@ mode remains a **retro 3D visual replica**:
 
 ## Pure-Luau procedural chibi mode
 
-`Chibi procedural` is a separate 128×192 generator that runs entirely in the
+`Chibi procedural` is a separate 128×256 generator that runs entirely in the
 Roblox client. It uses the pixelized Roblox avatar as identity input, then:
 
 - separates the visible head and body regions;
-- remaps them independently into fixed chibi proportions;
-- preserves the avatar's sampled hair, accessories and outfit colors;
+- analyzes a stable body centerline and non-overlapping semantic outfit regions;
+- projects torso, sleeve, midriff, skirt, leg and boot RGB into independent
+  procedural masks whose alpha defines the final chibi anatomy;
+- recovers compact high-contrast outfit accents after the area-sampled base
+  transfer, so symbols, stripes and garment panels can survive;
+- preserves the copied head temporarily for hair and accessory fidelity;
 - paints a deterministic skin-colored face region;
 - draws anime eyes, highlights, lashes, blush and a small mouth;
 - samples the avatar's hair color and redraws a graphic fringe over the face;
@@ -81,6 +85,7 @@ ReplicatedStorage
     ├── ThumbnailPixelator
     ├── ProceduralImageFinalizer
     ├── ProceduralRaster
+    ├── ProceduralChibiOutfitAnalyzer
     ├── ProceduralChibiBody
     ├── HairColorAnalyzer
     ├── ProceduralChibiFace
@@ -155,6 +160,7 @@ ProceduralChibiPaletteSize = 48
 ProceduralChibiAlphaThreshold = 48
 ProceduralChibiHeadHeightRatio = 0.41
 ProceduralChibiDebugStage = "Final"
+ProceduralChibiRunSelfTest = true
 ```
 
 `ThumbnailPaletteSize` controls the avatar-specific palette. The older
@@ -163,7 +169,13 @@ palette size. Head and body palette sizes can be tuned independently.
 `ThumbnailHeadRatio` controls the automatic regional split, while
 `ThumbnailCropPadding` leaves breathing room around the detected silhouette.
 The preview uses the largest integer display scale that fits, preventing uneven
-pixel widths at 80×80 and 96×96. `ThumbnailOutlineRadius` controls the actual
+pixel widths at 80×80 and 96×96. The 128×256 procedural image is shown at
+exactly 2× (256×512), with pixelated sampling. In Studio, the stage button
+cycles through `SourceBody`, `SourceRegions`, `BodyMasks`, `BodyProjected`,
+`BodyAccents`, `BeforeFace`, `BeforeFinalize` and `Final`.
+`ProceduralChibiRunSelfTest` runs only in Studio and validates a synthetic
+black/yellow/rainbow/skin/green-purple/boot outfit through the actual regional
+pipeline. `ThumbnailOutlineRadius` controls the actual
 raster outline. `OutlineThickness`
 is retained as a design setting, but Roblox `Highlight` does
 not expose a thickness property. The supported controls are outline color and

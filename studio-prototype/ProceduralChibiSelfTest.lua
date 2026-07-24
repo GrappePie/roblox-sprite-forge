@@ -3,12 +3,37 @@
 local Body = require(script.Parent:WaitForChild("ProceduralChibiBody"))
 local Face = require(script.Parent:WaitForChild("ProceduralChibiFace"))
 local Finalizer = require(script.Parent:WaitForChild("ProceduralImageFinalizer"))
+local OutfitAnalyzer = require(script.Parent:WaitForChild("ProceduralChibiOutfitAnalyzer"))
 local Raster = require(script.Parent:WaitForChild("ProceduralRaster"))
 
 local ProceduralChibiSelfTest = {}
 
 local function offset(width: number, x: number, y: number): number
 	return (y * width + x) * 4
+end
+
+local function writePixel(pixels: buffer, width: number, x: number, y: number, color: Color3)
+	local pixelOffset = offset(width, x, y)
+	buffer.writeu8(pixels, pixelOffset, math.round(color.R * 255))
+	buffer.writeu8(pixels, pixelOffset + 1, math.round(color.G * 255))
+	buffer.writeu8(pixels, pixelOffset + 2, math.round(color.B * 255))
+	buffer.writeu8(pixels, pixelOffset + 3, 255)
+end
+
+local function fillRect(
+	pixels: buffer,
+	width: number,
+	minX: number,
+	minY: number,
+	maxX: number,
+	maxY: number,
+	color: Color3
+)
+	for y = minY, maxY do
+		for x = minX, maxX do
+			writePixel(pixels, width, x, y, color)
+		end
+	end
 end
 
 local function countOpaque(pixels: buffer, size: Vector2): number
@@ -23,6 +48,101 @@ local function countOpaque(pixels: buffer, size: Vector2): number
 		end
 	end
 	return count
+end
+
+local function countNearColor(
+	pixels: buffer,
+	size: Vector2,
+	mask: buffer,
+	color: Color3,
+	tolerance: number
+): number
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local targetRed = color.R * 255
+	local targetGreen = color.G * 255
+	local targetBlue = color.B * 255
+	local count = 0
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) == 0
+				or buffer.readu8(pixels, pixelOffset + 3) == 0 then
+				continue
+			end
+			local delta = math.abs(buffer.readu8(pixels, pixelOffset) - targetRed)
+				+ math.abs(buffer.readu8(pixels, pixelOffset + 1) - targetGreen)
+				+ math.abs(buffer.readu8(pixels, pixelOffset + 2) - targetBlue)
+			if delta <= tolerance then
+				count += 1
+			end
+		end
+	end
+	return count
+end
+
+local function rowCenter(mask: buffer, width: number, y: number): number
+	local sum = 0
+	local count = 0
+	for x = 0, width - 1 do
+		if buffer.readu8(mask, offset(width, x, y) + 3) > 0 then
+			sum += x
+			count += 1
+		end
+	end
+	assert(count > 0, "Expected occupied mask row")
+	return sum / count
+end
+
+local function unionContains(masks: { [string]: buffer }, pixelOffset: number): boolean
+	for _, mask in masks do
+		if buffer.readu8(mask, pixelOffset + 3) > 0 then
+			return true
+		end
+	end
+	return false
+end
+
+local function syntheticOutfit(): (buffer, Vector2, Raster.Bounds, OutfitAnalyzer.BodyColors)
+	local size = Vector2.new(96, 192)
+	local width = 96
+	local pixels = buffer.create(width * 192 * 4)
+	local skin = Color3.fromRGB(236, 184, 158)
+	local black = Color3.fromRGB(18, 19, 27)
+	local yellow = Color3.fromRGB(255, 218, 48)
+	local sleeveColors = {
+		Color3.fromRGB(44, 182, 255),
+		Color3.fromRGB(86, 226, 93),
+		Color3.fromRGB(255, 216, 52),
+		Color3.fromRGB(255, 91, 161),
+		Color3.fromRGB(139, 72, 241),
+	}
+
+	fillRect(pixels, width, 35, 8, 60, 68, black)
+	for index, color in sleeveColors do
+		local minY = 8 + (index - 1) * 15
+		fillRect(pixels, width, 8, minY, 31, math.min(81, minY + 14), color)
+		fillRect(pixels, width, 64, minY, 87, math.min(81, minY + 14), color)
+	end
+	fillRect(pixels, width, 44, 27, 51, 43, yellow)
+	fillRect(pixels, width, 40, 33, 55, 37, yellow)
+	fillRect(pixels, width, 38, 69, 57, 82, skin)
+	fillRect(pixels, width, 25, 83, 39, 116, Color3.fromRGB(90, 226, 67))
+	fillRect(pixels, width, 40, 83, 55, 116, Color3.fromRGB(121, 56, 224))
+	fillRect(pixels, width, 56, 83, 70, 116, black)
+	fillRect(pixels, width, 34, 117, 45, 154, skin)
+	fillRect(pixels, width, 50, 117, 61, 154, skin)
+	fillRect(pixels, width, 32, 155, 46, 183, black)
+	fillRect(pixels, width, 49, 155, 63, 183, black)
+
+	return pixels, size, { minX = 8, minY = 8, maxX = 87, maxY = 183 }, {
+		head = skin,
+		torso = skin,
+		leftArm = skin,
+		rightArm = skin,
+		leftLeg = skin,
+		rightLeg = skin,
+	}
 end
 
 function ProceduralChibiSelfTest.Run(): { [string]: any }
@@ -48,10 +168,7 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	)
 	assert(paletteMetrics.requestedColors == 48, "48 requested colors were not preserved")
 	assert(paletteMetrics.paletteColors > 32, "48-color request was internally capped at 32")
-	assert(
-		Finalizer.CountOpaqueColors(paletteOutput, paletteSize) <= 48,
-		"Final color count exceeded requested limit"
-	)
+	assert(Finalizer.CountOpaqueColors(paletteOutput, paletteSize) <= 48, "Final color count exceeded requested limit")
 
 	local source = { minX = 12, minY = 20, maxX = 91, maxY = 219 }
 	local bands = Raster.MakeBodyBands(source)
@@ -61,16 +178,64 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 		assert(band.minX == source.minX and band.maxX == source.maxX, "Band center drifted")
 	end
 
+	local sourcePixels, sourceSize, bodySource, bodyColors = syntheticOutfit()
+	local analysis = OutfitAnalyzer.Analyze(sourcePixels, sourceSize, bodySource, bodyColors)
+	assert(analysis.midriffUsesSkin, "Synthetic exposed midriff was not classified as skin")
+	assert(analysis.leftLegUsesSkin and analysis.rightLegUsesSkin, "Synthetic skin legs were not classified as skin")
 	local bodySize = Vector2.new(128, 256)
-	local masks = Body.CreateMasks(bodySize)
+	local projected, accented, painted, masks, lockedColors, regionMetrics = Body.Paint(
+		bodySize,
+		sourcePixels,
+		sourceSize,
+		analysis,
+		bodyColors,
+		Color3.fromRGB(24, 28, 40)
+	)
 	assert(countOpaque(masks.leftArm, bodySize) > 0, "Left arm mask is empty")
 	assert(countOpaque(masks.rightArm, bodySize) > 0, "Right arm mask is empty")
 	assert(countOpaque(masks.leftLeg, bodySize) > 0, "Left leg mask is empty")
 	assert(countOpaque(masks.rightLeg, bodySize) > 0, "Right leg mask is empty")
-	assert(buffer.readu8(masks.leftArm, offset(128, 64, 130) + 3) == 0, "Arms touch at center")
-	assert(buffer.readu8(masks.rightArm, offset(128, 64, 130) + 3) == 0, "Arms touch at center")
-	assert(buffer.readu8(masks.leftLeg, offset(128, 64, 200) + 3) == 0, "Legs touch at center")
-	assert(buffer.readu8(masks.rightLeg, offset(128, 64, 200) + 3) == 0, "Legs touch at center")
+	assert(buffer.readu8(masks.leftLeg, offset(128, 64, 205) + 3) == 0, "Legs touch at center")
+	assert(rowCenter(masks.leftArm, 128, 112) > rowCenter(masks.leftArm, 128, 168), "Left arm is not angled outward")
+	assert(rowCenter(masks.rightArm, 128, 112) < rowCenter(masks.rightArm, 128, 168), "Right arm is not angled outward")
+
+	assert(countNearColor(accented, bodySize, masks.torso, Color3.fromRGB(255, 218, 48), 90) > 2, "Yellow torso symbol was lost")
+	assert(countNearColor(projected, bodySize, masks.abdomen, bodyColors.torso, 45) > 40, "Skin midriff was lost")
+	assert(countNearColor(projected, bodySize, masks.leftLeg, bodyColors.leftLeg, 45) > 60, "Left skin leg was lost")
+	assert(countNearColor(projected, bodySize, masks.rightLeg, bodyColors.rightLeg, 45) > 60, "Right skin leg was lost")
+	assert(countNearColor(accented, bodySize, masks.skirt, Color3.fromRGB(90, 226, 67), 120) > 2, "Green skirt panel was lost")
+	assert(countNearColor(accented, bodySize, masks.skirt, Color3.fromRGB(121, 56, 224), 120) > 2, "Purple skirt panel was lost")
+	assert(countNearColor(projected, bodySize, masks.leftBoot, Color3.fromRGB(18, 19, 27), 55) > 40, "Dark left boot was lost")
+	assert(regionMetrics.torso.accentComponents > 0, "Torso accent component was not recovered")
+
+	for y = 0, 255 do
+		for x = 0, 127 do
+			local pixelOffset = offset(128, x, y)
+			if buffer.readu8(painted, pixelOffset + 3) > 0 then
+				assert(unionContains(masks, pixelOffset), "Body emitted opaque pixels outside canonical masks")
+			end
+		end
+	end
+	local totalProjected = 0
+	local totalFallback = 0
+	for _, metric in regionMetrics do
+		totalProjected += metric.projectedPixels
+		totalFallback += metric.fallbackPixels
+	end
+	assert(totalFallback / math.max(1, totalProjected) < 0.45, "Synthetic regional fallback ratio is unreasonable")
+
+	local finalized, finalMetrics = Finalizer.FinalizeWithMetrics(
+		painted,
+		bodySize,
+		{
+			PaletteSize = 48,
+			LockedColors = lockedColors,
+			OutlineColor = Color3.fromRGB(24, 28, 40),
+			OutlineEnabled = true,
+			AlphaThreshold = 48,
+		}
+	)
+	assert(Finalizer.CountOpaqueColors(finalized, bodySize) <= 48, "Synthetic final body exceeded palette limit")
 
 	local faceLayer = Face.FaceLayer(
 		bodySize,
@@ -80,8 +245,6 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	assert(countOpaque(faceLayer, bodySize) > 0, "FaceLayer did not create alpha")
 
 	local destination = buffer.create(4)
-	buffer.writeu8(destination, 0, 0)
-	buffer.writeu8(destination, 1, 0)
 	buffer.writeu8(destination, 2, 255)
 	buffer.writeu8(destination, 3, 255)
 	Raster.SourceOverPixel(destination, 1, 1, 0, 0, { r = 255, g = 0, b = 0, a = 128 })
@@ -91,12 +254,14 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	return {
 		requestedColors = paletteMetrics.requestedColors,
 		paletteColors = paletteMetrics.paletteColors,
-		finalColors = paletteMetrics.finalColors,
+		finalColors = finalMetrics.finalColors,
 		leftArmPixels = countOpaque(masks.leftArm, bodySize),
 		rightArmPixels = countOpaque(masks.rightArm, bodySize),
 		leftLegPixels = countOpaque(masks.leftLeg, bodySize),
 		rightLegPixels = countOpaque(masks.rightLeg, bodySize),
 		facePixels = countOpaque(faceLayer, bodySize),
+		fallbackPixels = totalFallback,
+		accentComponents = regionMetrics.torso.accentComponents,
 	}
 end
 
