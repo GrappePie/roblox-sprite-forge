@@ -222,6 +222,21 @@ se reduce a etiquetas categóricas limpias, las mangas a 3–7 bandas
 longitudinales y la falda se proyecta por separado en cintura, paneles y
 volante inferior.
 
+La segunda pasada de regularización deja de componer el `labelMap` sobre el
+cabello final. El mapa categórico se conserva como diagnóstico, mientras que la
+imagen usa una base Primary y un máximo pequeño de masas Secondary, Highlight
+y Shadow. Los accesorios calculan posición respecto de `sourceBounds`, tamaño
+por área relativa, simplifican su paleta, preservan huecos y compiten por
+presupuestos de cobertura y colisión en el espacio destino. Las parejas
+comparten alineación estilística sin forzar tamaños idénticos.
+
+El cuerpo también se interpreta mediante descriptores: las bandas de manga se
+pintan en el eje local hombro-puño, el torso usa una base limpia más uno o dos
+emblemas, la falda genera entre cuatro y siete paneles y las botas se dividen
+en puño, caña y pie con recuperación de paleta por pareja. El límite de 48
+colores es un máximo; el finalizador puede detenerse antes cuando los buckets
+restantes pesan poco o son perceptualmente redundantes.
+
 Lower `PaletteLevels` for stronger color stepping on untextured body parts.
 Textured accessories and layered clothing retain their original textures so the
 player stays recognizable. Lower `UpdateRate` for a more visibly stepped

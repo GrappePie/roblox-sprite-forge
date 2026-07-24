@@ -232,8 +232,24 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 		}
 	)
 	assert(paletteMetrics.requestedColors == 48, "48 requested colors were not preserved")
-	assert(paletteMetrics.paletteColors > 32, "48-color request was internally capped at 32")
+	assert(paletteMetrics.paletteColors <= 48, "Palette exceeded its requested maximum")
 	assert(Finalizer.CountOpaqueColors(paletteOutput, paletteSize) <= 48, "Final color count exceeded requested limit")
+	local simplePixels = buffer.create(8 * 8 * 4)
+	for index = 0, 63 do
+		local pixelOffset = index * 4
+		local value = if index < 32 then 40 else 220
+		buffer.writeu8(simplePixels, pixelOffset, value)
+		buffer.writeu8(simplePixels, pixelOffset + 1, value)
+		buffer.writeu8(simplePixels, pixelOffset + 2, value)
+		buffer.writeu8(simplePixels, pixelOffset + 3, 255)
+	end
+	local _, simpleMetrics = Finalizer.FinalizeWithMetrics(simplePixels, Vector2.new(8, 8), {
+		PaletteSize = 48,
+		LockedColors = { Color3.fromRGB(40, 40, 40), Color3.fromRGB(220, 220, 220) },
+		OutlineEnabled = false,
+		AlphaThreshold = 48,
+	})
+	assert(simpleMetrics.finalColors < 48, "Simple image was forced to fill the 48-color maximum")
 
 	local diagonalMask = buffer.create(8 * 8 * 4)
 	buffer.writeu8(diagonalMask, offset(8, 2, 2) + 3, 255)
@@ -285,6 +301,9 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	assert(countOpaque(masks.lowerRuffle, bodySize) > 0, "Skirt lower ruffle is empty")
 	assert(bodyMetrics.lowerGarmentCentralCoverage > 0.1, "Central skirt component was not retained")
 	assert(bodyMetrics.shoulderPixelsOverwritten == 0, "Shoulder repair overwrote valid texture")
+	assert(bodyMetrics.leftSleeveBandCount >= 4 and bodyMetrics.rightSleeveBandCount >= 4, "Structured sleeve bands were lost")
+	assert(bodyMetrics.lowerGarmentPanelCount >= 4 and bodyMetrics.lowerGarmentPanelCount <= 7, "Skirt panel budget was ignored")
+	assert(bodyMetrics.rightBootFallbackRatio <= 0.2 or bodyMetrics.bootPairRecoveryUsed, "Right boot was not structurally recovered")
 	assert(countColorsInRows(projected, bodySize, masks.leftArm, 107, 154) >= 3, "Left shoulder was flattened")
 	assert(countColorsInRows(projected, bodySize, masks.rightArm, 107, 154) >= 3, "Right shoulder was flattened")
 
@@ -398,6 +417,10 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 		assert(paintedHead.metrics.averageFillRatio > 0.08, "Accessory inverse projection is too sparse")
 		assert(paintedHead.metrics.fringeGapCount == 0, "Procedural fringe contains a wide gap")
 		assert(paintedHead.metrics.fringeEyeOverlapRatio < 0.3, "Fringe covers too much of the eyes")
+		assert(paintedHead.metrics.hairMassCount <= 10, "Hair renderer produced too many artistic masses")
+		assert(paintedHead.metrics.highlightMassCount <= 2, "Hair renderer produced too many highlight masses")
+		assert(paintedHead.metrics.secondaryMassCount <= 2, "Hair renderer produced too many secondary masses")
+		assert(paintedHead.metrics.accessoryTargetCoverage <= 0.3, "Accessory coverage budget was exceeded")
 		assert(
 			countOpaque(paintedHead.accessoryCompositeAfterClipping, bodySize)
 				<= countOpaque(paintedHead.accessoryCompositeBeforeClipping, bodySize),

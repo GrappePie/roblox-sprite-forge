@@ -22,3 +22,46 @@ Studio hierarchy installed by the local installer:
 - `ServerScriptService.SpriteForgeDynamicAvatarServer`
 
 The old `YukiSprite*` client and server scripts are disabled, not deleted.
+
+## Roblox-only live paper avatar experiment
+
+`LivePixelAvatarPOC.client.lua` is a disposable Paper Mario-style experiment. Install it
+as `StarterPlayerScripts.LivePixelAvatarPOC` in a separate test place. It clones
+the local avatar into a `WorldModel`, mirrors `Motor6D`, `AnimationConstraint`,
+and `Bone` transforms, and draws the clone as a camera-facing paper cutout through
+a fixed-size `SurfaceGui`.
+
+The in-game panel switches among 144x216, 192x288, and 256x384 canvas sizes.
+Keys `1`, `2`, and `3` select the same quality levels; `H` toggles between the
+paper proxy and the original avatar. `P` enables or disables an eight-direction
+paper turn: the card compresses horizontally, changes direction at its thinnest
+point, and expands again. A client-only contact shadow follows the floor beneath
+the avatar and fades while airborne.
+
+This mode deliberately keeps the live `ViewportFrame` instead of rasterizing it.
+That preserves layered clothing, faces, hair, UGC textures, and animation without
+ComfyUI, screenshots, generated atlases, or Mesh/Image API access. The dormant
+raycast/`EditableImage` experiment remains in the file for comparison, guarded by
+`PAPER_MODE`, but it does no per-frame work while paper mode is active.
+
+## Structured Roblox-only comparison prototype
+
+The maintained successor to the disposable POC is split into:
+
+- `PixelAvatarConfig.lua`
+- `PixelAvatarUtils.lua`
+- `ThumbnailPixelator.lua`
+- `ProceduralImageFinalizer.lua`
+- `ProceduralRaster.lua`
+- `ProceduralChibiBody.lua`
+- `HairColorAnalyzer.lua`
+- `ProceduralChibiFace.lua`
+- `ProceduralChibiSelfTest.lua`
+- `ProceduralChibiRenderer.lua`
+- `PixelAvatarController.client.lua`
+
+Install it in the connected place with `npm run studio:install-roblox-only`.
+It provides Original, unsupported low-resolution ViewportFrame, and functional
+retro 3D comparison modes. See
+[`../docs/ROBLOX_ONLY_PIXEL_AVATAR.md`](../docs/ROBLOX_ONLY_PIXEL_AVATAR.md) for
+the verified platform limitation, controls, lifecycle, and tuning notes.

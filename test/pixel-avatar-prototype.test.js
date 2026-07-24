@@ -204,6 +204,11 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralHead, /NORMALIZED_ANCHORS/);
   assert.match(proceduralHead, /pairMetrics/);
   assert.match(proceduralHead, /heightRatio/);
+  assert.match(proceduralHead, /sourceRelativeArea/);
+  assert.match(proceduralHead, /targetRelativeArea/);
+  assert.match(proceduralHead, /projectAccessoriesStructured/);
+  assert.match(proceduralHead, /CloseRadius = 0/);
+  assert.doesNotMatch(proceduralHead, /CompositeBufferSourceOver\(backHair,\s*labelBack/);
   assert.doesNotMatch(proceduralHead, /shiftX =/);
   assert.doesNotMatch(proceduralHead, /ClipToMask\(frontAccessories,\s*size,\s*masks\.frontHair\)/);
   for (const mask of [
@@ -220,6 +225,7 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(hairColorAnalyzer, /labelMap/);
   assert.match(hairColorAnalyzer, /RegularizeHairLabelMap/);
   assert.match(hairColorAnalyzer, /rawLabelComponents/);
+  assert.match(hairColorAnalyzer, /rawIsolatedHighlightPixels/);
   assert.match(proceduralOutfitAnalyzer, /AnalyzeSleeveBands/);
   assert.match(proceduralBody, /masks\.waistband/);
   assert.match(proceduralBody, /masks\.upperPanels/);
@@ -233,6 +239,17 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
     "LowerGarmentSubregions", "BodyStructured",
   ]) {
     assert.ok(proceduralChibi.includes(stage), `missing regularization diagnostic: ${stage}`);
+  }
+  for (const stage of [
+    "HairCategoricalGrid", "HairMassDescriptors", "HairMassesFinal",
+    "AccessorySalience", "AccessoryRelativeScale", "AccessoryTargetLayout",
+    "AccessorySimplified", "AccessoryCoverageBudget", "TorsoDescriptor",
+    "TorsoStructured", "SleeveLocalCoordinates", "SleeveBandsStructured",
+    "LowerGarmentSourceSubregions", "LowerGarmentPanelDescriptors",
+    "LowerGarmentStructured", "BootDescriptors", "BootsStructured",
+    "AccentBudget", "RegionColorBudget", "FinalBeforePalette",
+  ]) {
+    assert.ok(proceduralChibi.includes(stage), `missing structured diagnostic: ${stage}`);
   }
   assert.doesNotMatch(hairColorAnalyzer, /primary = bucketColor\(buckets\[1\]\)/);
   assert.match(proceduralChibi, /xpcall/);
@@ -268,7 +285,7 @@ test("procedural image is finalized only after composition with locked colors", 
 });
 
 test("procedural Luau self-test covers synthetic buffer behavior", () => {
-  assert.match(proceduralSelfTest, /paletteMetrics\.paletteColors > 32/);
+  assert.match(proceduralSelfTest, /Palette exceeded its requested maximum/);
   assert.match(proceduralSelfTest, /bands\.torso\.maxY \+ 1 == bands\.hips\.minY/);
   assert.match(proceduralSelfTest, /Left arm mask is empty/);
   assert.match(proceduralSelfTest, /Legs touch at center/);
@@ -293,6 +310,9 @@ test("procedural Luau self-test covers synthetic buffer behavior", () => {
   assert.match(proceduralSelfTest, /Hair label escaped hairCoreMask/);
   assert.match(proceduralSelfTest, /Five sleeve bands collapsed below four/);
   assert.match(proceduralSelfTest, /Fringe covers too much of the eyes/);
+  assert.match(proceduralSelfTest, /Simple image was forced to fill the 48-color maximum/);
+  assert.match(proceduralSelfTest, /Accessory coverage budget was exceeded/);
+  assert.match(proceduralSelfTest, /Hair renderer produced too many artistic masses/);
 });
 
 test("procedural head owns its alpha and keeps copied pixels debug-only", () => {

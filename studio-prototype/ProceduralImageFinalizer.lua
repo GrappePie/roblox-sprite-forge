@@ -90,9 +90,41 @@ local function buildPalette(
 	local palette: { PaletteColor } = {}
 	local seen: { [number]: boolean } = {}
 
+	local opaquePixels = 0
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			if buffer.readu8(pixels, pixelOffset(width, x, y) + 3) >= alphaThreshold then
+				opaquePixels += 1
+			end
+		end
+	end
 	for _, color in lockedColors do
 		local red, green, blue = colorBytes(color)
-		appendUnique(palette, seen, red, green, blue, paletteSize)
+		local appearances = 0
+		for y = 0, height - 1 do
+			for x = 0, width - 1 do
+				local offset = pixelOffset(width, x, y)
+				if buffer.readu8(pixels, offset + 3) >= alphaThreshold
+					and colorDistance(
+						buffer.readu8(pixels, offset),
+						buffer.readu8(pixels, offset + 1),
+						buffer.readu8(pixels, offset + 2),
+						red, green, blue
+					) <= 7 then
+					appearances += 1
+				end
+			end
+		end
+		local distinct = true
+		for _, existing in palette do
+			if colorDistance(red, green, blue, existing.r, existing.g, existing.b) < 8 then
+				distinct = false
+				break
+			end
+		end
+		if appearances >= 3 and distinct then
+			appendUnique(palette, seen, red, green, blue, paletteSize)
+		end
 	end
 
 	local histogram: { [number]: ColorBucket } = {}
@@ -142,10 +174,13 @@ local function buildPalette(
 		return a.count > b.count
 	end)
 
+	local minimumBucketWeight = math.max(1, opaquePixels * 0.0012)
+	local minimumPaletteDistance = 14
 	while #palette < paletteSize and #buckets > 0 do
 		local best: ColorBucket? = nil
 		local bestScore = -1
 		for _, bucket in buckets do
+			if bucket.count < minimumBucketWeight then continue end
 			local roundedKey = colorKey(
 				math.clamp(math.round(bucket.r), 0, 255),
 				math.clamp(math.round(bucket.g), 0, 255),
@@ -164,13 +199,14 @@ local function buildPalette(
 			if #palette == 0 then
 				nearestDistance = 1
 			end
+			if #palette > 0 and nearestDistance < minimumPaletteDistance then continue end
 			local score = nearestDistance * (1 + math.log(bucket.count))
 			if score > bestScore then
 				bestScore = score
 				best = bucket
 			end
 		end
-		if not best then
+		if not best or bestScore < 24 then
 			break
 		end
 		appendUnique(palette, seen, best.r, best.g, best.b, paletteSize)

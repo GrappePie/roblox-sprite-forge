@@ -259,8 +259,8 @@ function ProceduralChibiFace.FrontHairLayer(size: Vector2, headBounds: Bounds, h
 		local valleyX = fringeLeft + math.floor((fringeRight - fringeLeft) * tipIndex / 7)
 		local tipY = if centerDistance == 0
 			then fringeBottom + 6
-			elseif centerDistance == 1 then fringeBottom - 5
-			elseif centerDistance == 2 then fringeBottom - 2
+			elseif centerDistance == 1 then fringeBottom - 10
+			elseif centerDistance == 2 then fringeBottom - 6
 			else fringeBottom + 1
 		table.insert(points, Vector2.new(valleyX, fringeTop + math.floor(g.height * 0.14)))
 		table.insert(points, Vector2.new(tipX, tipY))

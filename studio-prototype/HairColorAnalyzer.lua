@@ -22,6 +22,10 @@ export type HairColors = {
 	removedLabelPixels: number,
 	isolatedHighlightPixels: number,
 	isolatedSecondaryPixels: number,
+	rawIsolatedHighlightPixels: number,
+	rawIsolatedSecondaryPixels: number,
+	remainingIsolatedHighlightPixels: number,
+	remainingIsolatedSecondaryPixels: number,
 }
 
 type Bucket = {
@@ -159,6 +163,8 @@ function HairColorAnalyzer.RegularizeHairLabelMap(
 	local regularizedComponents = 0
 	local isolatedHighlightPixels = 0
 	local isolatedSecondaryPixels = 0
+	local rawIsolatedHighlightPixels = 0
+	local rawIsolatedSecondaryPixels = 0
 	for label = 1, 4 do
 		local rawMask = buffer.create(buffer.len(rawLabels))
 		local cleanMask = buffer.create(buffer.len(rawLabels))
@@ -173,7 +179,14 @@ function HairColorAnalyzer.RegularizeHairLabelMap(
 				end
 			end
 		end
-		rawComponents += #Raster.ConnectedComponents(rawMask, size, nil, 1, 8)
+		local rawLabelParts = Raster.ConnectedComponents(rawMask, size, nil, 1, 8)
+		rawComponents += #rawLabelParts
+		for _, component in rawLabelParts do
+			if component.area <= 2 then
+				if label == 2 then rawIsolatedSecondaryPixels += component.area end
+				if label == 3 then rawIsolatedHighlightPixels += component.area end
+			end
+		end
 		local components = Raster.ConnectedComponents(cleanMask, size, nil, 1, 8)
 		for _, component in components do
 			if component.area <= 2 then
@@ -197,6 +210,10 @@ function HairColorAnalyzer.RegularizeHairLabelMap(
 		removedLabelPixels = math.max(0, rawPixels - finalPixels),
 		isolatedHighlightPixels = isolatedHighlightPixels,
 		isolatedSecondaryPixels = isolatedSecondaryPixels,
+		rawIsolatedHighlightPixels = rawIsolatedHighlightPixels,
+		rawIsolatedSecondaryPixels = rawIsolatedSecondaryPixels,
+		remainingIsolatedHighlightPixels = isolatedHighlightPixels,
+		remainingIsolatedSecondaryPixels = isolatedSecondaryPixels,
 	}
 end
 
@@ -343,6 +360,10 @@ function HairColorAnalyzer.Analyze(
 			removedLabelPixels = 0,
 			isolatedHighlightPixels = 0,
 			isolatedSecondaryPixels = 0,
+			rawIsolatedHighlightPixels = 0,
+			rawIsolatedSecondaryPixels = 0,
+			remainingIsolatedHighlightPixels = 0,
+			remainingIsolatedSecondaryPixels = 0,
 		}
 	end
 
@@ -537,6 +558,10 @@ function HairColorAnalyzer.Analyze(
 		removedLabelPixels = labelMetrics.removedLabelPixels,
 		isolatedHighlightPixels = labelMetrics.isolatedHighlightPixels,
 		isolatedSecondaryPixels = labelMetrics.isolatedSecondaryPixels,
+		rawIsolatedHighlightPixels = labelMetrics.rawIsolatedHighlightPixels,
+		rawIsolatedSecondaryPixels = labelMetrics.rawIsolatedSecondaryPixels,
+		remainingIsolatedHighlightPixels = labelMetrics.remainingIsolatedHighlightPixels,
+		remainingIsolatedSecondaryPixels = labelMetrics.remainingIsolatedSecondaryPixels,
 	}
 end
 

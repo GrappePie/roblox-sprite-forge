@@ -28,6 +28,7 @@ export type SourceRegion = {
 	fallbackSecondary: Color3,
 	skinSignals: { Color3 },
 	bands: { SleeveBand }?,
+	palette: { Color3 },
 }
 
 export type SleeveBand = {
@@ -93,6 +94,59 @@ end
 
 local function colorDistance3(left: Color3, right: Color3): number
 	return colorDistance(left.R * 255, left.G * 255, left.B * 255, right)
+end
+
+local function paletteFromMask(pixels: buffer, size: Vector2, mask: buffer, maximumColors: number): { Color3 }
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local buckets: { [number]: { red: number, green: number, blue: number, count: number, score: number } } = {}
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) == 0 or buffer.readu8(pixels, pixelOffset + 3) < 24 then continue end
+			local red = buffer.readu8(pixels, pixelOffset)
+			local green = buffer.readu8(pixels, pixelOffset + 1)
+			local blue = buffer.readu8(pixels, pixelOffset + 2)
+			local key = math.floor(red / 32) * 64 + math.floor(green / 32) * 8 + math.floor(blue / 32)
+			local bucket = buckets[key] or { red = 0, green = 0, blue = 0, count = 0, score = 0 }
+			bucket.red += red
+			bucket.green += green
+			bucket.blue += blue
+			bucket.count += 1
+			buckets[key] = bucket
+		end
+	end
+	local ranked = {}
+	for _, bucket in buckets do
+		local red = bucket.red / bucket.count
+		local green = bucket.green / bucket.count
+		local blue = bucket.blue / bucket.count
+		local chroma = math.max(red, green, blue) - math.min(red, green, blue)
+		local darkness = 255 - (red + green + blue) / 3
+		-- Saturated garment panels and dark line-art both deserve a place even
+		-- when a broad neutral region has more raw samples.
+		bucket.score = bucket.count * (1 + chroma / 170 + darkness / 460)
+		table.insert(ranked, bucket)
+	end
+	table.sort(ranked, function(left, right) return left.score > right.score end)
+	local palette = {}
+	for _, bucket in ranked do
+		local color = Color3.fromRGB(
+			math.round(bucket.red / bucket.count),
+			math.round(bucket.green / bucket.count),
+			math.round(bucket.blue / bucket.count)
+		)
+		local distinct = true
+		for _, existing in palette do
+			if colorDistance3(existing, color) < 30 then
+				distinct = false
+				break
+			end
+		end
+		if distinct then table.insert(palette, color) end
+		if #palette >= maximumColors then break end
+	end
+	return palette
 end
 
 function ProceduralChibiOutfitAnalyzer.AnalyzeSleeveBands(
@@ -374,6 +428,11 @@ local function analyzeRegion(
 	end
 	local primary = bucketColor(1, fallback)
 	local secondary = bucketColor(2, primary:Lerp(Color3.new(), 0.18))
+	local palette = {}
+	for index = 1, math.min(6, #buckets) do
+		table.insert(palette, bucketColor(index, primary))
+	end
+	if #palette == 0 then table.insert(palette, primary) end
 	return {
 		name = name,
 		bounds = bounds,
@@ -382,6 +441,7 @@ local function analyzeRegion(
 		fallbackPrimary = primary,
 		fallbackSecondary = secondary,
 		skinSignals = skinSignals,
+		palette = palette,
 	}, metrics, skinSamples, metrics.opaqueSamples
 end
 
@@ -473,6 +533,12 @@ function ProceduralChibiOutfitAnalyzer.Analyze(
 				centralPixels += 1
 			end
 		end
+	end
+	local garmentPalette = paletteFromMask(pixels, size, centralGarmentMask, 6)
+	if #garmentPalette > 0 then
+		regions.lowerGarment.palette = garmentPalette
+		regions.lowerGarment.fallbackPrimary = garmentPalette[1]
+		regions.lowerGarment.fallbackSecondary = garmentPalette[2] or garmentPalette[1]
 	end
 	return {
 		torso = regions.torso,

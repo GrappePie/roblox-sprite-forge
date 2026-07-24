@@ -28,6 +28,9 @@ export type DebugStage =
 	| "HairLabelMapRaw"
 	| "HairLabelMapRegularized"
 	| "HairColorMasses"
+	| "HairCategoricalGrid"
+	| "HairMassDescriptors"
+	| "HairMassesFinal"
 	| "HairMasks"
 	| "ProtectedFacialFeatures"
 	| "FrontAccessoryAllowed"
@@ -40,6 +43,11 @@ export type DebugStage =
 	| "AccessoryPairLayout"
 	| "AccessoryCompositeBeforeClipping"
 	| "AccessoryCompositeAfterClipping"
+	| "AccessorySalience"
+	| "AccessoryRelativeScale"
+	| "AccessoryTargetLayout"
+	| "AccessorySimplified"
+	| "AccessoryCoverageBudget"
 	| "AccessoryBackLayer"
 	| "AccessorySideLayer"
 	| "AccessoryFrontLayer"
@@ -51,12 +59,24 @@ export type DebugStage =
 	| "LowerGarmentPalette"
 	| "LowerGarmentSubregions"
 	| "BodyStructured"
+	| "TorsoDescriptor"
+	| "TorsoStructured"
+	| "SleeveLocalCoordinates"
+	| "SleeveBandsStructured"
+	| "LowerGarmentSourceSubregions"
+	| "LowerGarmentPanelDescriptors"
+	| "LowerGarmentStructured"
+	| "BootDescriptors"
+	| "BootsStructured"
+	| "AccentBudget"
+	| "RegionColorBudget"
 	| "HeadWithoutAccessories"
 	| "HeadComposite"
 	| "LegacyCopiedHead"
 	| "BeforeFace"
 	| "BeforeFinalize"
 	| "FinalBeforeQuantize"
+	| "FinalBeforePalette"
 	| "Final"
 
 export type Options = {
@@ -111,6 +131,9 @@ local VALID_STAGES: { [string]: boolean } = {
 	HairLabelMapRaw = true,
 	HairLabelMapRegularized = true,
 	HairColorMasses = true,
+	HairCategoricalGrid = true,
+	HairMassDescriptors = true,
+	HairMassesFinal = true,
 	HairMasks = true,
 	ProtectedFacialFeatures = true,
 	FrontAccessoryAllowed = true,
@@ -123,6 +146,11 @@ local VALID_STAGES: { [string]: boolean } = {
 	AccessoryPairLayout = true,
 	AccessoryCompositeBeforeClipping = true,
 	AccessoryCompositeAfterClipping = true,
+	AccessorySalience = true,
+	AccessoryRelativeScale = true,
+	AccessoryTargetLayout = true,
+	AccessorySimplified = true,
+	AccessoryCoverageBudget = true,
 	AccessoryBackLayer = true,
 	AccessorySideLayer = true,
 	AccessoryFrontLayer = true,
@@ -134,12 +162,24 @@ local VALID_STAGES: { [string]: boolean } = {
 	LowerGarmentPalette = true,
 	LowerGarmentSubregions = true,
 	BodyStructured = true,
+	TorsoDescriptor = true,
+	TorsoStructured = true,
+	SleeveLocalCoordinates = true,
+	SleeveBandsStructured = true,
+	LowerGarmentSourceSubregions = true,
+	LowerGarmentPanelDescriptors = true,
+	LowerGarmentStructured = true,
+	BootDescriptors = true,
+	BootsStructured = true,
+	AccentBudget = true,
+	RegionColorBudget = true,
 	HeadWithoutAccessories = true,
 	HeadComposite = true,
 	LegacyCopiedHead = true,
 	BeforeFace = true,
 	BeforeFinalize = true,
 	FinalBeforeQuantize = true,
+	FinalBeforePalette = true,
 	Final = true,
 }
 
@@ -525,7 +565,18 @@ function ProceduralChibiRenderer.Create(
 			or stage == "SleevesStructured"
 			or stage == "LowerGarmentPalette"
 			or stage == "LowerGarmentSubregions"
-			or stage == "BodyStructured" then
+			or stage == "BodyStructured"
+			or stage == "TorsoDescriptor"
+			or stage == "TorsoStructured"
+			or stage == "SleeveLocalCoordinates"
+			or stage == "SleeveBandsStructured"
+			or stage == "LowerGarmentSourceSubregions"
+			or stage == "LowerGarmentPanelDescriptors"
+			or stage == "LowerGarmentStructured"
+			or stage == "BootDescriptors"
+			or stage == "BootsStructured"
+			or stage == "AccentBudget"
+			or stage == "RegionColorBudget" then
 			Raster.CompositeBufferSourceOver(outputPixels, bodyDebug[stage], outputSize)
 		else
 			Raster.CompositeBufferSourceOver(outputPixels, proceduralBody, outputSize)
@@ -543,6 +594,12 @@ function ProceduralChibiRenderer.Create(
 			elseif stage == "HairLabelMapRegularized" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairLabelMapRegularized, outputSize)
 			elseif stage == "HairColorMasses" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairColorMasses, outputSize)
+			elseif stage == "HairCategoricalGrid" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairLabelMapRegularized, outputSize)
+			elseif stage == "HairMassDescriptors" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairMassDescriptors, outputSize)
+			elseif stage == "HairMassesFinal" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairColorMasses, outputSize)
 			elseif stage == "HairMasks" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairMasks, outputSize)
@@ -574,6 +631,16 @@ function ProceduralChibiRenderer.Create(
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCompositeBeforeClipping, outputSize)
 			elseif stage == "AccessoryCompositeAfterClipping" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCompositeAfterClipping, outputSize)
+			elseif stage == "AccessorySalience" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessorySelectedPerZone, outputSize)
+			elseif stage == "AccessoryRelativeScale" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryRelativeScale, outputSize)
+			elseif stage == "AccessoryTargetLayout" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryTargetLayout, outputSize)
+			elseif stage == "AccessorySimplified" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessorySimplified, outputSize)
+			elseif stage == "AccessoryCoverageBudget" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCoverageBudget, outputSize)
 			elseif stage == "AccessoryBackLayer" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.backAccessories, outputSize)
 			elseif stage == "AccessorySideLayer" then
@@ -588,7 +655,10 @@ function ProceduralChibiRenderer.Create(
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.backHair, outputSize)
 			elseif stage == "LegacyCopiedHead" then
 				Raster.CopyRegionArea(avatarPixels, avatarSourceSize, headSource, outputPixels, outputSize, headTarget)
-			elseif stage == "HeadComposite" or stage == "BeforeFinalize" or stage == "FinalBeforeQuantize" then
+			elseif stage == "HeadComposite"
+				or stage == "BeforeFinalize"
+				or stage == "FinalBeforeQuantize"
+				or stage == "FinalBeforePalette" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.composite, outputSize)
 			else
 				local fallbackEnabled = options.HeadFallbackEnabled ~= false

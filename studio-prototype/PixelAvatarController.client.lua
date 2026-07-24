@@ -547,10 +547,36 @@ local function regenerateThumbnail()
 					renderMetrics.head.isolatedSecondaryPixels,
 					renderMetrics.head.fringeEyeOverlapRatio
 				))
+				print(string.format(
+					"[PixelAvatar] accessory sourceCoverage=%.3f targetCoverage=%.3f maximumArea=%d collisions=%d rejectedTarget=%d simplifiedColors=%d preservedHoles=%d",
+					renderMetrics.head.accessorySourceCoverage,
+					renderMetrics.head.accessoryTargetCoverage,
+					renderMetrics.head.maximumAccessoryArea,
+					renderMetrics.head.targetCollisionCount,
+					renderMetrics.head.targetRejectedCount,
+					renderMetrics.head.simplifiedAccessoryColors,
+					renderMetrics.head.preservedAccessoryHoles
+				))
+				print(string.format(
+					"[PixelAvatar] hair masses=%d highlight=%d shadow=%d secondary=%d strands=%d rawIsolatedHighlight=%d rawIsolatedSecondary=%d remainingHighlight=%d remainingSecondary=%d",
+					renderMetrics.head.hairMassCount,
+					renderMetrics.head.highlightMassCount,
+					renderMetrics.head.shadowMassCount,
+					renderMetrics.head.secondaryMassCount,
+					renderMetrics.head.strandLineCount,
+					renderMetrics.head.rawIsolatedHighlightPixels,
+					renderMetrics.head.rawIsolatedSecondaryPixels,
+					renderMetrics.head.remainingIsolatedHighlightPixels,
+					renderMetrics.head.remainingIsolatedSecondaryPixels
+				))
 				for pairId, pairMetric in renderMetrics.head.pairMetrics do
 					print(string.format(
-						"[PixelAvatar] pair=%d heightRatio=%.3f scaleRatio=%.3f verticalOffset=%d pixelsLeft=%d pixelsRight=%d",
+						"[PixelAvatar] pair=%d zones=%s/%s kinds=%s/%s heightRatio=%.3f scaleRatio=%.3f verticalOffset=%d pixelsLeft=%d pixelsRight=%d",
 						pairId,
+						pairMetric.leftZone,
+						pairMetric.rightZone,
+						pairMetric.leftKind,
+						pairMetric.rightKind,
 						pairMetric.heightRatio,
 						pairMetric.scaleRatio,
 						pairMetric.verticalOffset,
@@ -564,6 +590,21 @@ local function regenerateThumbnail()
 					renderMetrics.body.lowerGarmentCentralCoverage,
 					renderMetrics.body.shoulderPixelsRepaired,
 					renderMetrics.body.shoulderPixelsOverwritten
+				))
+				print(string.format(
+					"[PixelAvatar] structure sleeves=%d/%d similarity=%.3f torso=%d/%d removed=%d skirtPanels=%d skirtFallback=%d skirtSkinRejected=%d bootsFallback=%.3f/%.3f bootPairRecovery=%s",
+					renderMetrics.body.leftSleeveBandCount,
+					renderMetrics.body.rightSleeveBandCount,
+					renderMetrics.body.sleeveSequenceSimilarity,
+					renderMetrics.body.torsoRetainedComponents,
+					renderMetrics.body.torsoSourceComponents,
+					renderMetrics.body.torsoRemovedNoisePixels,
+					renderMetrics.body.lowerGarmentPanelCount,
+					renderMetrics.body.lowerGarmentFallbackPixels,
+					renderMetrics.body.lowerGarmentSkinPixelsRejected,
+					renderMetrics.body.leftBootFallbackRatio,
+					renderMetrics.body.rightBootFallbackRatio,
+					tostring(renderMetrics.body.bootPairRecoveryUsed)
 				))
 				for regionName, regionMetrics in renderMetrics.regions do
 					local fallbackRatio = regionMetrics.fallbackPixels

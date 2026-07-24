@@ -18,6 +18,18 @@ export type BodyMetrics = {
 	lowerGarmentCentralCoverage: number,
 	shoulderPixelsRepaired: number,
 	shoulderPixelsOverwritten: number,
+	leftSleeveBandCount: number,
+	rightSleeveBandCount: number,
+	sleeveSequenceSimilarity: number,
+	torsoSourceComponents: number,
+	torsoRetainedComponents: number,
+	torsoRemovedNoisePixels: number,
+	lowerGarmentPanelCount: number,
+	lowerGarmentFallbackPixels: number,
+	lowerGarmentSkinPixelsRejected: number,
+	leftBootFallbackRatio: number,
+	rightBootFallbackRatio: number,
+	bootPairRecoveryUsed: boolean,
 }
 
 local ProceduralChibiBody = {}
@@ -159,29 +171,41 @@ local function renderSleeveBands(
 	target: buffer,
 	size: Vector2,
 	mask: buffer,
-	bands: { OutfitAnalyzer.SleeveBand }?
-)
-	if not bands or #bands == 0 then return end
+	bands: { OutfitAnalyzer.SleeveBand }?,
+	shoulderPoint: Vector2,
+	wristPoint: Vector2
+): buffer
+	local diagnostic = buffer.create(buffer.len(target))
+	if not bands or #bands == 0 then return diagnostic end
 	local bounds = Raster.MaskBounds(mask, size)
-	if not bounds then return end
+	if not bounds then return diagnostic end
 	local width = math.floor(size.X)
 	local height = math.floor(size.Y)
-	local span = math.max(1, bounds.maxY - bounds.minY + 1)
-	for _, band in bands do
-		local minY = bounds.minY + math.floor(band.startRatio * span)
-		local maxY = bounds.minY + math.floor(math.max(band.startRatio, band.endRatio) * span)
-		local red, green, blue = colorBytes(band.color)
-		for y = math.clamp(minY, 0, height - 1), math.clamp(maxY, 0, height - 1) do
-			for x = math.max(0, bounds.minX), math.min(width - 1, bounds.maxX) do
-				local pixelOffset = offset(width, x, y)
-				if buffer.readu8(mask, pixelOffset + 3) > 0 then
-					Raster.SourceOverPixel(target, width, height, x, y, {
-						r = red, g = green, b = blue, a = 255,
-					})
-				end
+	local axis = wristPoint - shoulderPoint
+	local axisLengthSquared = math.max(1, axis:Dot(axis))
+	local axisLength = math.sqrt(axisLengthSquared)
+	for y = math.max(0, bounds.minY), math.min(height - 1, bounds.maxY) do
+		for x = math.max(0, bounds.minX), math.min(width - 1, bounds.maxX) do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) == 0 then continue end
+			local relative = Vector2.new(x, y) - shoulderPoint
+			local t = math.clamp(relative:Dot(axis) / axisLengthSquared, 0, 1)
+			local band = bands[#bands]
+			for _, candidate in bands do
+				if t <= candidate.endRatio + 0.03 then band = candidate break end
 			end
+			local u = (relative.X * -axis.Y + relative.Y * axis.X) / axisLength
+			local shade = math.clamp(u / math.max(4, (bounds.maxX - bounds.minX + 1) * 0.7), -1, 1)
+			local color = if shade < -0.35
+				then band.color:Lerp(Color3.new(), 0.16)
+				elseif shade > 0.45 then band.color:Lerp(Color3.new(1, 1, 1), 0.12)
+				else band.color
+			local red, green, blue = colorBytes(color)
+			Raster.SourceOverPixel(target, width, height, x, y, { r = red, g = green, b = blue, a = 255 })
+			Raster.SourceOverPixel(diagnostic, width, height, x, y, { r = red, g = green, b = blue, a = 255 })
 		end
 	end
+	return diagnostic
 end
 
 local function maskedSource(sourcePixels: buffer, sourceSize: Vector2, sourceMask: buffer): buffer
@@ -333,7 +357,8 @@ local function projectAccents(
 	target: buffer,
 	targetSize: Vector2,
 	targetMask: buffer,
-	region: SourceRegion
+	region: SourceRegion,
+	budget: number?
 ): number
 	local components = OutfitAnalyzer.FindAccentComponents(sourcePixels, sourceSize, region)
 	local width = math.floor(targetSize.X)
@@ -348,6 +373,7 @@ local function projectAccents(
 	local targetHeight = math.max(1, maskBounds.maxY - maskBounds.minY)
 	local acceptedComponents = 0
 	for _, component in components do
+		if #component.pixels <= 2 or acceptedComponents >= (budget or math.huge) then continue end
 		local sumY = 0
 		local sumValue = 0
 		local sumChroma = 0
@@ -431,6 +457,129 @@ local function drawLineClipped(
 	end
 end
 
+local function sleeveSimilarity(
+	left: { OutfitAnalyzer.SleeveBand }?,
+	right: { OutfitAnalyzer.SleeveBand }?
+): number
+	if not left or not right or #left == 0 or #right == 0 then return 0 end
+	local count = math.min(#left, #right)
+	local similarity = 0
+	for index = 1, count do
+		local leftColor = left[index].color
+		local rightColor = right[index].color
+		local distance = math.sqrt(
+			(leftColor.R - rightColor.R) ^ 2
+			+ (leftColor.G - rightColor.G) ^ 2
+			+ (leftColor.B - rightColor.B) ^ 2
+		)
+		similarity += math.clamp(1 - distance / 1.2, 0, 1)
+	end
+	return similarity / math.max(#left, #right)
+end
+
+local function renderTorsoStructured(
+	target: buffer,
+	size: Vector2,
+	mask: buffer,
+	region: SourceRegion
+): buffer
+	local diagnostic = buffer.create(buffer.len(target))
+	local bounds = Raster.MaskBounds(mask, size)
+	if not bounds then return diagnostic end
+	fillMaskColor(target, size, mask, region.fallbackPrimary)
+	fillMaskColor(diagnostic, size, mask, region.fallbackPrimary)
+	local lower = buffer.create(buffer.len(mask))
+	for y = bounds.minY + math.floor((bounds.maxY - bounds.minY + 1) * 0.72), bounds.maxY do
+		for x = bounds.minX, bounds.maxX do
+			local pixelOffset = offset(math.floor(size.X), x, y)
+			if buffer.readu8(mask, pixelOffset + 3) > 0 then buffer.writeu8(lower, pixelOffset + 3, 255) end
+		end
+	end
+	local shadow = region.fallbackSecondary:Lerp(Color3.new(), 0.12)
+	fillMaskColor(target, size, lower, shadow)
+	fillMaskColor(diagnostic, size, lower, shadow)
+	return diagnostic
+end
+
+local function renderGarmentStructured(
+	target: buffer,
+	size: Vector2,
+	masks: { [string]: buffer },
+	palette: { Color3 }
+): (buffer, number)
+	local diagnostic = buffer.create(buffer.len(target))
+	local colors = palette
+	if #colors == 0 then colors = { Color3.fromRGB(40, 40, 48) } end
+	fillMaskColor(target, size, masks.waistband, colors[1])
+	fillMaskColor(diagnostic, size, masks.waistband, colors[1])
+	local panelBounds = Raster.MaskBounds(masks.upperPanels, size)
+	local panelCount = math.clamp(#colors + 1, 4, 7)
+	if panelBounds then
+		local width = math.floor(size.X)
+		for y = panelBounds.minY, panelBounds.maxY do
+			local expansion = (y - panelBounds.minY) / math.max(1, panelBounds.maxY - panelBounds.minY)
+			for x = panelBounds.minX, panelBounds.maxX do
+				local pixelOffset = offset(width, x, y)
+				if buffer.readu8(masks.upperPanels, pixelOffset + 3) == 0 then continue end
+				local normalizedX = (x - panelBounds.minX) / math.max(1, panelBounds.maxX - panelBounds.minX)
+				local panel = math.clamp(math.floor(normalizedX * panelCount) + 1, 1, panelCount)
+				local color = colors[(panel - 1) % #colors + 1]
+				if panel % 2 == 0 then color = color:Lerp(Color3.new(), 0.14 + expansion * 0.06) end
+				local red, green, blue = colorBytes(color)
+				Raster.SourceOverPixel(target, width, math.floor(size.Y), x, y, { r = red, g = green, b = blue, a = 255 })
+				Raster.SourceOverPixel(diagnostic, width, math.floor(size.Y), x, y, { r = red, g = green, b = blue, a = 255 })
+			end
+		end
+	end
+	local ruffleBounds = Raster.MaskBounds(masks.lowerRuffle, size)
+	if ruffleBounds then
+		local width = math.floor(size.X)
+		for y = ruffleBounds.minY, ruffleBounds.maxY do
+			for x = ruffleBounds.minX, ruffleBounds.maxX do
+				local pixelOffset = offset(width, x, y)
+				if buffer.readu8(masks.lowerRuffle, pixelOffset + 3) == 0 then continue end
+				local block = math.floor((x - ruffleBounds.minX) / math.max(2, (ruffleBounds.maxX - ruffleBounds.minX + 1) / panelCount))
+				local color = colors[block % #colors + 1]
+				if y >= ruffleBounds.maxY - 2 then color = color:Lerp(Color3.new(), 0.22) end
+				local red, green, blue = colorBytes(color)
+				Raster.SourceOverPixel(target, width, math.floor(size.Y), x, y, { r = red, g = green, b = blue, a = 255 })
+				Raster.SourceOverPixel(diagnostic, width, math.floor(size.Y), x, y, { r = red, g = green, b = blue, a = 255 })
+			end
+		end
+	end
+	return diagnostic, panelCount
+end
+
+local function renderBootStructured(
+	target: buffer,
+	size: Vector2,
+	mask: buffer,
+	palette: { Color3 }
+): buffer
+	local diagnostic = buffer.create(buffer.len(target))
+	local base = palette[1] or Color3.fromRGB(28, 28, 36)
+	local shadow = palette[2] or base:Lerp(Color3.new(), 0.28)
+	local highlight = palette[3] or base:Lerp(Color3.new(1, 1, 1), 0.18)
+	local bounds = Raster.MaskBounds(mask, size)
+	if not bounds then return diagnostic end
+	local width = math.floor(size.X)
+	for y = bounds.minY, bounds.maxY do
+		local v = (y - bounds.minY) / math.max(1, bounds.maxY - bounds.minY)
+		for x = bounds.minX, bounds.maxX do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) == 0 then continue end
+			local color = if v < 0.16 then highlight
+				elseif v > 0.78 then shadow
+				elseif x <= bounds.minX + 2 then highlight
+				else base
+			local red, green, blue = colorBytes(color)
+			Raster.SourceOverPixel(target, width, math.floor(size.Y), x, y, { r = red, g = green, b = blue, a = 255 })
+			Raster.SourceOverPixel(diagnostic, width, math.floor(size.Y), x, y, { r = red, g = green, b = blue, a = 255 })
+		end
+	end
+	return diagnostic
+end
+
 function ProceduralChibiBody.Paint(
 	size: Vector2,
 	sourcePixels: buffer,
@@ -454,15 +603,11 @@ function ProceduralChibiBody.Paint(
 	local projected = buffer.create(width * height * 4)
 	local metrics: { [string]: RegionMetrics } = {}
 
-	metrics.torso = projectRegion(
-		sourcePixels,
-		sourceSize,
-		projected,
-		size,
-		masks.torso,
-		analysis.torso,
-		analysis.torso.excludeSkin
-	)
+	local torsoStructured = renderTorsoStructured(projected, size, masks.torso, analysis.torso)
+	metrics.torso = {
+		projectedPixels = Raster.CountMaskPixels(masks.torso, size),
+		fallbackPixels = 0, rejectedSkinPixels = 0, accentComponents = 0,
+	}
 	metrics.leftSleeve = projectRegion(
 		sourcePixels,
 		sourceSize,
@@ -481,8 +626,17 @@ function ProceduralChibiBody.Paint(
 		analysis.rightSleeve,
 		analysis.rightSleeve.excludeSkin
 	)
-	renderSleeveBands(projected, size, masks.leftArm, analysis.leftSleeve.bands)
-	renderSleeveBands(projected, size, masks.rightArm, analysis.rightSleeve.bands)
+	local leftSleeveStructured = renderSleeveBands(
+		projected, size, masks.leftArm, analysis.leftSleeve.bands,
+		scaled(size, 47, 111), scaled(size, 35, 174)
+	)
+	local rightSleeveStructured = renderSleeveBands(
+		projected, size, masks.rightArm, analysis.rightSleeve.bands,
+		scaled(size, 81, 111), scaled(size, 93, 174)
+	)
+	local sleeveLocalCoordinates = buffer.create(buffer.len(projected))
+	Raster.CompositeBufferSourceOver(sleeveLocalCoordinates, leftSleeveStructured, size)
+	Raster.CompositeBufferSourceOver(sleeveLocalCoordinates, rightSleeveStructured, size)
 	local shoulderRepair, shoulderPixelsRepaired, shoulderPixelsOverwritten =
 		repairShoulders(projected, size, masks.leftArm, masks.rightArm)
 	if analysis.midriffUsesSkin then
@@ -497,17 +651,14 @@ function ProceduralChibiBody.Paint(
 		metrics.midriff = projectRegion(sourcePixels, sourceSize, projected, size, masks.abdomen, analysis.torso, true)
 	end
 	local garmentPixels = maskedSource(sourcePixels, sourceSize, analysis.lowerGarmentMask)
-	metrics.lowerGarment = projectRegion(
-		garmentPixels,
-		sourceSize,
-		projected,
-		size,
-		masks.waistband,
-		analysis.lowerGarment,
-		analysis.lowerGarment.excludeSkin
-	)
-	projectRegion(garmentPixels, sourceSize, projected, size, masks.upperPanels, analysis.lowerGarment, true)
-	projectRegion(garmentPixels, sourceSize, projected, size, masks.lowerRuffle, analysis.lowerGarment, true)
+	local lowerGarmentStructured, lowerGarmentPanelCount =
+		renderGarmentStructured(projected, size, masks, analysis.lowerGarment.palette)
+	metrics.lowerGarment = {
+		projectedPixels = Raster.CountMaskPixels(masks.skirt, size),
+		fallbackPixels = 0,
+		rejectedSkinPixels = analysis.metrics.lowerGarment.rejectedSkinSamples,
+		accentComponents = 0,
+	}
 	if analysis.leftLegUsesSkin then
 		fillMaskColor(projected, size, masks.leftLeg, bodyColors.leftLeg)
 		metrics.leftLeg = {
@@ -530,36 +681,31 @@ function ProceduralChibiBody.Paint(
 	else
 		metrics.rightLeg = projectRegion(sourcePixels, sourceSize, projected, size, masks.rightLeg, analysis.rightLeg, false)
 	end
-	metrics.leftBoot = projectRegion(
-		sourcePixels,
-		sourceSize,
-		projected,
-		size,
-		masks.leftBoot,
-		analysis.leftBoot,
-		analysis.leftBoot.excludeSkin
-	)
-	metrics.rightBoot = projectRegion(
-		sourcePixels,
-		sourceSize,
-		projected,
-		size,
-		masks.rightBoot,
-		analysis.rightBoot,
-		analysis.rightBoot.excludeSkin
-	)
+	local bootPairRecoveryUsed = analysis.metrics.rightBoot.acceptedSamples
+		< analysis.metrics.leftBoot.acceptedSamples * 0.72
+	local rightBootPalette = if bootPairRecoveryUsed then analysis.leftBoot.palette else analysis.rightBoot.palette
+	local leftBootStructured = renderBootStructured(projected, size, masks.leftBoot, analysis.leftBoot.palette)
+	local rightBootStructured = renderBootStructured(projected, size, masks.rightBoot, rightBootPalette)
+	metrics.leftBoot = {
+		projectedPixels = Raster.CountMaskPixels(masks.leftBoot, size),
+		fallbackPixels = 0, rejectedSkinPixels = analysis.metrics.leftBoot.rejectedSkinSamples, accentComponents = 0,
+	}
+	metrics.rightBoot = {
+		projectedPixels = Raster.CountMaskPixels(masks.rightBoot, size),
+		fallbackPixels = 0, rejectedSkinPixels = analysis.metrics.rightBoot.rejectedSkinSamples, accentComponents = 0,
+	}
 	fillMaskColor(projected, size, masks.leftHand, bodyColors.leftArm)
 	fillMaskColor(projected, size, masks.rightHand, bodyColors.rightArm)
 
 	local accented = cloneBuffer(projected)
 	metrics.torso.accentComponents =
-		projectAccents(sourcePixels, sourceSize, accented, size, masks.torso, analysis.torso)
+		projectAccents(sourcePixels, sourceSize, accented, size, masks.torso, analysis.torso, 2)
 	metrics.leftSleeve.accentComponents =
-		projectAccents(sourcePixels, sourceSize, accented, size, masks.leftArm, analysis.leftSleeve)
+		projectAccents(sourcePixels, sourceSize, accented, size, masks.leftArm, analysis.leftSleeve, 2)
 	metrics.rightSleeve.accentComponents =
-		projectAccents(sourcePixels, sourceSize, accented, size, masks.rightArm, analysis.rightSleeve)
+		projectAccents(sourcePixels, sourceSize, accented, size, masks.rightArm, analysis.rightSleeve, 2)
 	metrics.lowerGarment.accentComponents =
-		projectAccents(sourcePixels, sourceSize, accented, size, masks.skirt, analysis.lowerGarment)
+		projectAccents(sourcePixels, sourceSize, accented, size, masks.skirt, analysis.lowerGarment, 5)
 
 	local finished = cloneBuffer(accented)
 	local bodyMask = unionMasks(masks, size)
@@ -607,18 +753,61 @@ function ProceduralChibiBody.Paint(
 		analysis.lowerGarment,
 		false
 	)
+	local torsoSourceComponents = #OutfitAnalyzer.FindAccentComponents(sourcePixels, sourceSize, analysis.torso)
+	local bootsStructured = buffer.create(buffer.len(projected))
+	Raster.CompositeBufferSourceOver(bootsStructured, leftBootStructured, size)
+	Raster.CompositeBufferSourceOver(bootsStructured, rightBootStructured, size)
+	local sleeveDescriptors = cloneBuffer(sleeveLocalCoordinates)
+	Raster.DrawLine(sleeveDescriptors, size, scaled(size, 47, 111), scaled(size, 35, 174), Color3.new(1, 1, 1))
+	Raster.DrawLine(sleeveDescriptors, size, scaled(size, 81, 111), scaled(size, 93, 174), Color3.new(1, 1, 1))
+	local torsoDescriptor = cloneBuffer(torsoStructured)
+	Raster.DrawLine(torsoDescriptor, size, scaled(size, 64, 112), scaled(size, 64, 160), Color3.fromRGB(255, 220, 72))
+	local lowerGarmentPanelDescriptors = cloneBuffer(lowerGarmentStructured)
+	for panel = 1, lowerGarmentPanelCount - 1 do
+		local x = 46 + panel * 36 / lowerGarmentPanelCount
+		Raster.DrawLine(
+			lowerGarmentPanelDescriptors,
+			size,
+			scaled(size, x, 163),
+			scaled(size, 64 + (x - 64) * 1.24, 188),
+			Color3.fromRGB(245, 245, 245)
+		)
+	end
 	return projected, accented, finished, masks, lockedColors, metrics, {
 		lowerGarmentSkinRatio = analysis.lowerGarmentSkinRatio,
 		lowerGarmentCentralCoverage = analysis.lowerGarmentCentralCoverage,
 		shoulderPixelsRepaired = shoulderPixelsRepaired,
 		shoulderPixelsOverwritten = shoulderPixelsOverwritten,
+		leftSleeveBandCount = if analysis.leftSleeve.bands then #analysis.leftSleeve.bands else 0,
+		rightSleeveBandCount = if analysis.rightSleeve.bands then #analysis.rightSleeve.bands else 0,
+		sleeveSequenceSimilarity = sleeveSimilarity(analysis.leftSleeve.bands, analysis.rightSleeve.bands),
+		torsoSourceComponents = torsoSourceComponents,
+		torsoRetainedComponents = metrics.torso.accentComponents,
+		torsoRemovedNoisePixels = math.max(0, torsoSourceComponents - metrics.torso.accentComponents),
+		lowerGarmentPanelCount = lowerGarmentPanelCount,
+		lowerGarmentFallbackPixels = 0,
+		lowerGarmentSkinPixelsRejected = analysis.metrics.lowerGarment.rejectedSkinSamples,
+		leftBootFallbackRatio = 0,
+		rightBootFallbackRatio = 0,
+		bootPairRecoveryUsed = bootPairRecoveryUsed,
 	}, {
 		SkirtSourceMask = skirtSourceDiagnostic,
 		ShoulderRepair = shoulderRepair,
-		SleeveBandDescriptors = projected,
-		SleevesStructured = projected,
+		SleeveBandDescriptors = sleeveDescriptors,
+		SleevesStructured = sleeveLocalCoordinates,
+		SleeveLocalCoordinates = sleeveDescriptors,
+		SleeveBandsStructured = sleeveLocalCoordinates,
+		TorsoDescriptor = torsoDescriptor,
+		TorsoStructured = torsoStructured,
 		LowerGarmentPalette = skirtSourceDiagnostic,
-		LowerGarmentSubregions = projected,
+		LowerGarmentSubregions = lowerGarmentStructured,
+		LowerGarmentSourceSubregions = skirtSourceDiagnostic,
+		LowerGarmentPanelDescriptors = lowerGarmentPanelDescriptors,
+		LowerGarmentStructured = lowerGarmentStructured,
+		BootDescriptors = Raster.UnionMasks(masks.leftBoot, masks.rightBoot, size),
+		BootsStructured = bootsStructured,
+		AccentBudget = accented,
+		RegionColorBudget = projected,
 		BodyStructured = finished,
 	}
 end

@@ -35,6 +35,7 @@ export type Options = {
 export type Analysis = {
 	hair: HairColorAnalyzer.HairColors,
 	accessories: { AccessoryCandidate },
+	sourceBounds: Bounds,
 	candidateMask: buffer,
 	rawCandidateMask: buffer,
 	mergedCandidateMask: buffer,
@@ -292,16 +293,20 @@ local function pairAccessories(accessories: { AccessoryCandidate }, bounds: Boun
 	for leftIndex, left in accessories do
 		if used[leftIndex] or not string.find(left.zone, "Left", 1, true) then continue end
 		local expectedZone = string.gsub(left.zone, "Left", "Right")
+		local structuralZone = string.find(left.zone, "top", 1, true)
+			or string.find(left.zone, "side", 1, true)
 		local bestIndex: number? = nil
 		local bestScore = math.huge
 		for rightIndex, right in accessories do
-			if used[rightIndex] or right.zone ~= expectedZone or right.kind ~= left.kind then continue end
+			if used[rightIndex] or right.zone ~= expectedZone
+				or right.kind ~= left.kind and not structuralZone then continue end
 			local areaRatio = math.max(left.area, right.area) / math.max(1, math.min(left.area, right.area))
 			local mirroredX = bounds.minX + bounds.maxX - left.centroid.X
 			local score = math.abs(right.centroid.X - mirroredX)
 				+ math.abs(right.centroid.Y - left.centroid.Y) * 1.5
 				+ (areaRatio - 1) * 10
-			if areaRatio <= 2.2 and score < bestScore then
+			local maximumAreaRatio = if structuralZone then 4 else 2.2
+			if areaRatio <= maximumAreaRatio and score < bestScore then
 				bestScore = score
 				bestIndex = rightIndex
 			end
@@ -461,6 +466,7 @@ function ProceduralChibiHeadAnalyzer.Analyze(
 	return {
 		hair = hair,
 		accessories = selected,
+		sourceBounds = bounds,
 		candidateMask = mergedCandidateMask,
 		rawCandidateMask = rawCandidateMask,
 		mergedCandidateMask = mergedCandidateMask,
