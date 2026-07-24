@@ -202,6 +202,11 @@ local function syntheticHead(
 	fillRect(pixels, width, 80, 38, 88, 61, Color3.fromRGB(42, 221, 230))
 	fillRect(pixels, width, 24, 28, 29, 34, Color3.fromRGB(255, 197, 55))
 	fillRect(pixels, width, 67, 30, 75, 38, Color3.fromRGB(237, 82, 177))
+	-- Several independent ornaments deliberately share frontLeft. Quota/NMS
+	-- must preserve them instead of selecting one winner for the whole zone.
+	fillRect(pixels, width, 32, 31, 33, 35, Color3.fromRGB(220, 255, 235))
+	fillRect(pixels, width, 38, 31, 39, 35, Color3.fromRGB(215, 250, 232))
+	fillRect(pixels, width, 44, 31, 45, 35, Color3.fromRGB(225, 255, 238))
 	return pixels, size, bounds, skin
 end
 
@@ -246,6 +251,8 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 
 	local sourcePixels, sourceSize, bodySource, bodyColors = syntheticOutfit()
 	local analysis = OutfitAnalyzer.Analyze(sourcePixels, sourceSize, bodySource, bodyColors)
+	assert(analysis.leftSleeve.bands and #analysis.leftSleeve.bands >= 4, "Five sleeve bands collapsed below four")
+	assert(analysis.rightSleeve.bands and #analysis.rightSleeve.bands >= 4, "Right sleeve band order was lost")
 	assert(analysis.midriffUsesSkin, "Synthetic exposed midriff was not classified as skin")
 	assert(analysis.leftLegUsesSkin and analysis.rightLegUsesSkin, "Synthetic skin legs were not classified as skin")
 	local bodySize = Vector2.new(128, 256)
@@ -342,6 +349,27 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 			)
 		)
 		assert(headAnalysis.metrics.rawComponents >= headAnalysis.metrics.mergedComponents, "Fragment merging increased component count")
+		assert(
+			(headAnalysis.metrics.retainedByZone.frontLeft or 0) >= 2,
+			string.format(
+				"Multiple frontLeft accessories were discarded candidates=%d retained=%d quota=%d overlap=%d",
+				headAnalysis.metrics.candidatesByZone.frontLeft or 0,
+				headAnalysis.metrics.retainedByZone.frontLeft or 0,
+				headAnalysis.metrics.rejectedByQuota,
+				headAnalysis.metrics.rejectedByOverlap
+			)
+		)
+		assert(headAnalysis.hair.regularizedLabelComponents <= headAnalysis.hair.rawLabelComponents, "Hair regularization increased label noise")
+		assert(headAnalysis.hair.isolatedHighlightPixels == 0, "Isolated highlight labels survived")
+		assert(headAnalysis.hair.isolatedSecondaryPixels == 0, "Isolated secondary labels survived")
+		for y = 0, 95 do
+			for x = 0, 95 do
+				local pixelOffset = offset(96, x, y)
+				if buffer.readu8(headAnalysis.hair.labelMap, pixelOffset + 3) > 0 then
+					assert(buffer.readu8(headAnalysis.hair.hairCoreMask, pixelOffset + 3) > 0, "Hair label escaped hairCoreMask")
+				end
+			end
+		end
 		local paired = 0
 		for _, accessory in headAnalysis.accessories do
 			if accessory.pairId then paired += 1 end
@@ -369,6 +397,12 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 		assert(paintedHead.metrics.projectedComponents > 0, "No accessory component was projected")
 		assert(paintedHead.metrics.averageFillRatio > 0.08, "Accessory inverse projection is too sparse")
 		assert(paintedHead.metrics.fringeGapCount == 0, "Procedural fringe contains a wide gap")
+		assert(paintedHead.metrics.fringeEyeOverlapRatio < 0.3, "Fringe covers too much of the eyes")
+		assert(
+			countOpaque(paintedHead.accessoryCompositeAfterClipping, bodySize)
+				<= countOpaque(paintedHead.accessoryCompositeBeforeClipping, bodySize),
+			"Accessory clipping created opaque pixels"
+		)
 		assert(paintedHead.metrics.hairCoreCoverage > 0.08, "Hair core coverage is too low")
 		assert(countOpaque(paintedHead.composite, bodySize) > countOpaque(paintedHead.face, bodySize), "Head layers did not compose")
 		assert(not paintedHead.metrics.fallbackUsed, "Synthetic head unexpectedly used legacy fallback")

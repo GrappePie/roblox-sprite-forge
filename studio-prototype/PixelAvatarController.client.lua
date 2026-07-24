@@ -526,6 +526,39 @@ local function regenerateThumbnail()
 					renderMetrics.head.strayPixelCount
 				))
 				print(string.format(
+					"[PixelAvatar] zones frontLeft=%d frontRight=%d topLeft=%d topRight=%d sideLeft=%d sideRight=%d mergedPairs=%d rejectedOverlap=%d rejectedQuota=%d rejectedDuplicate=%d",
+					renderMetrics.head.retainedByZone.frontLeft or 0,
+					renderMetrics.head.retainedByZone.frontRight or 0,
+					renderMetrics.head.retainedByZone.topLeft or 0,
+					renderMetrics.head.retainedByZone.topRight or 0,
+					renderMetrics.head.retainedByZone.sideLeft or 0,
+					renderMetrics.head.retainedByZone.sideRight or 0,
+					renderMetrics.head.mergedPairs,
+					renderMetrics.head.rejectedByOverlap,
+					renderMetrics.head.rejectedByQuota,
+					renderMetrics.head.rejectedAsDuplicate
+				))
+				print(string.format(
+					"[PixelAvatar] hair labels raw=%d regularized=%d removedPixels=%d isolatedHighlight=%d isolatedSecondary=%d fringeEyeOverlap=%.3f",
+					renderMetrics.head.rawLabelComponents,
+					renderMetrics.head.regularizedLabelComponents,
+					renderMetrics.head.removedLabelPixels,
+					renderMetrics.head.isolatedHighlightPixels,
+					renderMetrics.head.isolatedSecondaryPixels,
+					renderMetrics.head.fringeEyeOverlapRatio
+				))
+				for pairId, pairMetric in renderMetrics.head.pairMetrics do
+					print(string.format(
+						"[PixelAvatar] pair=%d heightRatio=%.3f scaleRatio=%.3f verticalOffset=%d pixelsLeft=%d pixelsRight=%d",
+						pairId,
+						pairMetric.heightRatio,
+						pairMetric.scaleRatio,
+						pairMetric.verticalOffset,
+						pairMetric.projectedPixelsLeft,
+						pairMetric.projectedPixelsRight
+					))
+				end
+				print(string.format(
 					"[PixelAvatar] body skirtSkin=%.3f skirtCentral=%.3f shoulderRepaired=%d shoulderOverwritten=%d",
 					renderMetrics.body.lowerGarmentSkinRatio,
 					renderMetrics.body.lowerGarmentCentralCoverage,

@@ -27,6 +27,14 @@ export type SourceRegion = {
 	fallbackPrimary: Color3,
 	fallbackSecondary: Color3,
 	skinSignals: { Color3 },
+	bands: { SleeveBand }?,
+}
+
+export type SleeveBand = {
+	startRatio: number,
+	endRatio: number,
+	color: Color3,
+	samples: number,
 }
 
 export type RowProfile = {
@@ -81,6 +89,87 @@ local function colorDistance(red: number, green: number, blue: number, color: Co
 	local deltaGreen = green - color.G * 255
 	local deltaBlue = blue - color.B * 255
 	return math.sqrt(deltaRed * deltaRed + deltaGreen * deltaGreen + deltaBlue * deltaBlue)
+end
+
+local function colorDistance3(left: Color3, right: Color3): number
+	return colorDistance(left.R * 255, left.G * 255, left.B * 255, right)
+end
+
+function ProceduralChibiOutfitAnalyzer.AnalyzeSleeveBands(
+	pixels: buffer,
+	size: Vector2,
+	region: SourceRegion
+): { SleeveBand }
+	local width = math.floor(size.X)
+	local descriptors: { SleeveBand } = {}
+	local regionHeight = math.max(1, region.bounds.maxY - region.bounds.minY + 1)
+	for y = region.bounds.minY, region.bounds.maxY do
+		local buckets: { [number]: { red: number, green: number, blue: number, count: number } } = {}
+		for x = region.bounds.minX, region.bounds.maxX do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(pixels, pixelOffset + 3) < region.minAlpha then continue end
+			local red = buffer.readu8(pixels, pixelOffset)
+			local green = buffer.readu8(pixels, pixelOffset + 1)
+			local blue = buffer.readu8(pixels, pixelOffset + 2)
+			if region.excludeSkin and ProceduralChibiOutfitAnalyzer.IsSkinLike(red, green, blue, region.skinSignals) then
+				continue
+			end
+			local key = math.floor(red / 40) * 49 + math.floor(green / 40) * 7 + math.floor(blue / 40)
+			local bucket = buckets[key] or { red = 0, green = 0, blue = 0, count = 0 }
+			bucket.red += red
+			bucket.green += green
+			bucket.blue += blue
+			bucket.count += 1
+			buckets[key] = bucket
+		end
+		local dominant = nil
+		for _, bucket in buckets do
+			if not dominant or bucket.count > dominant.count then dominant = bucket end
+		end
+		if dominant then
+			local color = Color3.fromRGB(
+				math.round(dominant.red / dominant.count),
+				math.round(dominant.green / dominant.count),
+				math.round(dominant.blue / dominant.count)
+			)
+			local ratio = (y - region.bounds.minY) / regionHeight
+			local previous = descriptors[#descriptors]
+			if previous and colorDistance3(previous.color, color) <= 54 then
+				local total = previous.samples + dominant.count
+				previous.color = previous.color:Lerp(color, dominant.count / total)
+				previous.endRatio = ratio
+				previous.samples = total
+			else
+				table.insert(descriptors, {
+					startRatio = ratio,
+					endRatio = ratio,
+					color = color,
+					samples = dominant.count,
+				})
+			end
+		end
+	end
+	-- Merge tiny observations into the closest neighbor, leaving 3-7 broad
+	-- longitudinal bands instead of raster noise.
+	while #descriptors > 7 do
+		local smallest = 1
+		for index = 2, #descriptors do
+			if descriptors[index].samples < descriptors[smallest].samples then smallest = index end
+		end
+		local neighbor = if smallest == 1 then 2 elseif smallest == #descriptors then smallest - 1
+			elseif colorDistance3(descriptors[smallest].color, descriptors[smallest - 1].color)
+				<= colorDistance3(descriptors[smallest].color, descriptors[smallest + 1].color)
+				then smallest - 1 else smallest + 1
+		local keep = descriptors[neighbor]
+		local remove = descriptors[smallest]
+		keep.startRatio = math.min(keep.startRatio, remove.startRatio)
+		keep.endRatio = math.max(keep.endRatio, remove.endRatio)
+		keep.color = keep.color:Lerp(remove.color, remove.samples / math.max(1, keep.samples + remove.samples))
+		keep.samples += remove.samples
+		table.remove(descriptors, smallest)
+		table.sort(descriptors, function(left, right) return left.startRatio < right.startRatio end)
+	end
+	return descriptors
 end
 
 function ProceduralChibiOutfitAnalyzer.IsSkinLike(
@@ -340,6 +429,8 @@ function ProceduralChibiOutfitAnalyzer.Analyze(
 		metrics[name] = regionMetrics
 		skinRatios[name] = skinSamples / math.max(1, opaqueSamples)
 	end
+	regions.leftSleeve.bands = ProceduralChibiOutfitAnalyzer.AnalyzeSleeveBands(pixels, size, regions.leftSleeve)
+	regions.rightSleeve.bands = ProceduralChibiOutfitAnalyzer.AnalyzeSleeveBands(pixels, size, regions.rightSleeve)
 	local width = math.floor(size.X)
 	local height = math.floor(size.Y)
 	local lowerGarmentMask = buffer.create(width * height * 4)

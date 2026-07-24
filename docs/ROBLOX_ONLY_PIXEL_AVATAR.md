@@ -178,7 +178,7 @@ ProceduralChibiHeadWidthRatio = 0.82
 ProceduralChibiHeadWidthAuto = true
 ProceduralChibiHairSecondaryMinimumCoverage = 0.04
 ProceduralChibiAccessoryMinimumConfidence = 0.35
-ProceduralChibiMaxAccessoryComponents = 10
+ProceduralChibiMaxAccessoryComponents = 16
 ProceduralChibiHeadFallbackEnabled = true
 ProceduralChibiDebugStage = "Final"
 ProceduralChibiRunSelfTest = true
@@ -208,6 +208,19 @@ is retained as a design setting, but Roblox `Highlight` does
 not expose a thickness property. The supported controls are outline color and
 transparency. `UsePixelatedSampling` cannot affect a `ViewportFrame`; nearest
 neighbor sampling only applies when an actual image exists.
+
+La regularización estructural añade `HairLabelMapRaw`,
+`HairLabelMapRegularized`, `HairColorMasses`, `ProtectedFacialFeatures`,
+`FrontAccessoryAllowed`, `SideAccessoryAllowed`,
+`AccessorySelectedPerZone`, `AccessoryPairLayout`,
+`AccessoryCompositeBeforeClipping`, `AccessoryCompositeAfterClipping`,
+`SleeveBandDescriptors`, `SleevesStructured`, `LowerGarmentPalette`,
+`LowerGarmentSubregions` y `BodyStructured`. Los accesorios usan anchors
+normalizados, cuotas por zona y supresión de máximos no solapados. Los adornos
+frontales pueden sobresalir del flequillo sin invadir ojos o boca. El cabello
+se reduce a etiquetas categóricas limpias, las mangas a 3–7 bandas
+longitudinales y la falda se proyecta por separado en cintura, paneles y
+volante inferior.
 
 Lower `PaletteLevels` for stronger color stepping on untextured body parts.
 Textured accessories and layered clothing retain their original textures so the

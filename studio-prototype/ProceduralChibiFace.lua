@@ -187,6 +187,7 @@ function ProceduralChibiFace.FacialFeaturesLayer(
 	local eyeShadow = eyeColor:Lerp(Color3.fromRGB(20, 15, 31), 0.48)
 	local eyeOutline = Color3.fromRGB(35, 29, 48)
 	local highlight = Color3.fromRGB(255, 250, 255)
+	local sclera = skinColor:Lerp(Color3.fromRGB(255, 252, 250), 0.9)
 	local blush = Color3.fromRGB(238, 142, 157)
 	local mouth = Color3.fromRGB(137, 68, 91)
 	local eyeOffset = math.max(9, math.floor(g.width * 0.125))
@@ -196,10 +197,13 @@ function ProceduralChibiFace.FacialFeaturesLayer(
 	for _, direction in { -1, 1 } do
 		local eyeX = g.centerX + eyeOffset * direction
 		fillEllipse(layer, size, eyeX, eyeY, eyeRadiusX + 1, eyeRadiusY, eyeOutline)
-		fillEllipse(layer, size, eyeX, eyeY + 1, eyeRadiusX, eyeRadiusY - 1, eyeColor)
-		fillEllipse(layer, size, eyeX, eyeY + math.floor(eyeRadiusY * 0.5), eyeRadiusX - 1, 2, eyeShadow)
-		fillEllipse(layer, size, eyeX, eyeY + eyeRadiusY - 1, eyeRadiusX - 2, 1, eyeColor:Lerp(highlight, 0.48))
-		fillEllipse(layer, size, eyeX, eyeY + 1, math.max(1, eyeRadiusX - 2), math.max(2, eyeRadiusY - 2), eyeShadow)
+		fillEllipse(layer, size, eyeX, eyeY + 1, eyeRadiusX, eyeRadiusY - 1, sclera)
+		local irisRadiusX = math.max(3, eyeRadiusX - 2)
+		local irisRadiusY = math.max(3, eyeRadiusY - 1)
+		fillEllipse(layer, size, eyeX, eyeY + 1, irisRadiusX, irisRadiusY, eyeColor)
+		fillEllipse(layer, size, eyeX, eyeY - 1, irisRadiusX, math.max(2, irisRadiusY - 2), eyeShadow)
+		fillEllipse(layer, size, eyeX, eyeY + 2, math.max(2, irisRadiusX - 1), 2, eyeColor:Lerp(highlight, 0.42))
+		fillEllipse(layer, size, eyeX, eyeY + 1, math.max(1, irisRadiusX - 2), math.max(2, irisRadiusY - 2), eyeShadow:Lerp(Color3.new(), 0.2))
 		-- At most two coherent highlights per eye.
 		writeColor(layer, size, eyeX - 2, eyeY - 2, highlight)
 		writeColor(layer, size, eyeX + 2, eyeY + 1, highlight)
@@ -253,7 +257,11 @@ function ProceduralChibiFace.FrontHairLayer(size: Vector2, headBounds: Bounds, h
 		local centerDistance = math.abs(tipIndex - 3)
 		local tipX = fringeLeft + math.floor((fringeRight - fringeLeft) * (tipIndex + 0.5) / 7)
 		local valleyX = fringeLeft + math.floor((fringeRight - fringeLeft) * tipIndex / 7)
-		local tipY = fringeBottom + math.floor((3 - centerDistance) * 2)
+		local tipY = if centerDistance == 0
+			then fringeBottom + 6
+			elseif centerDistance == 1 then fringeBottom - 5
+			elseif centerDistance == 2 then fringeBottom - 2
+			else fringeBottom + 1
 		table.insert(points, Vector2.new(valleyX, fringeTop + math.floor(g.height * 0.14)))
 		table.insert(points, Vector2.new(tipX, tipY))
 	end

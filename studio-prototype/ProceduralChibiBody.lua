@@ -155,6 +155,35 @@ local function fillMaskColorRange(
 	end
 end
 
+local function renderSleeveBands(
+	target: buffer,
+	size: Vector2,
+	mask: buffer,
+	bands: { OutfitAnalyzer.SleeveBand }?
+)
+	if not bands or #bands == 0 then return end
+	local bounds = Raster.MaskBounds(mask, size)
+	if not bounds then return end
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local span = math.max(1, bounds.maxY - bounds.minY + 1)
+	for _, band in bands do
+		local minY = bounds.minY + math.floor(band.startRatio * span)
+		local maxY = bounds.minY + math.floor(math.max(band.startRatio, band.endRatio) * span)
+		local red, green, blue = colorBytes(band.color)
+		for y = math.clamp(minY, 0, height - 1), math.clamp(maxY, 0, height - 1) do
+			for x = math.max(0, bounds.minX), math.min(width - 1, bounds.maxX) do
+				local pixelOffset = offset(width, x, y)
+				if buffer.readu8(mask, pixelOffset + 3) > 0 then
+					Raster.SourceOverPixel(target, width, height, x, y, {
+						r = red, g = green, b = blue, a = 255,
+					})
+				end
+			end
+		end
+	end
+end
+
 local function maskedSource(sourcePixels: buffer, sourceSize: Vector2, sourceMask: buffer): buffer
 	local result = buffer.create(buffer.len(sourcePixels))
 	local width = math.floor(sourceSize.X)
@@ -452,6 +481,8 @@ function ProceduralChibiBody.Paint(
 		analysis.rightSleeve,
 		analysis.rightSleeve.excludeSkin
 	)
+	renderSleeveBands(projected, size, masks.leftArm, analysis.leftSleeve.bands)
+	renderSleeveBands(projected, size, masks.rightArm, analysis.rightSleeve.bands)
 	local shoulderRepair, shoulderPixelsRepaired, shoulderPixelsOverwritten =
 		repairShoulders(projected, size, masks.leftArm, masks.rightArm)
 	if analysis.midriffUsesSkin then
@@ -471,10 +502,12 @@ function ProceduralChibiBody.Paint(
 		sourceSize,
 		projected,
 		size,
-		masks.skirt,
+		masks.waistband,
 		analysis.lowerGarment,
 		analysis.lowerGarment.excludeSkin
 	)
+	projectRegion(garmentPixels, sourceSize, projected, size, masks.upperPanels, analysis.lowerGarment, true)
+	projectRegion(garmentPixels, sourceSize, projected, size, masks.lowerRuffle, analysis.lowerGarment, true)
 	if analysis.leftLegUsesSkin then
 		fillMaskColor(projected, size, masks.leftLeg, bodyColors.leftLeg)
 		metrics.leftLeg = {
@@ -582,6 +615,11 @@ function ProceduralChibiBody.Paint(
 	}, {
 		SkirtSourceMask = skirtSourceDiagnostic,
 		ShoulderRepair = shoulderRepair,
+		SleeveBandDescriptors = projected,
+		SleevesStructured = projected,
+		LowerGarmentPalette = skirtSourceDiagnostic,
+		LowerGarmentSubregions = projected,
+		BodyStructured = finished,
 	}
 end
 

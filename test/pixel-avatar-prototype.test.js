@@ -191,13 +191,49 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralHeadAnalyzer, /AccessoryDepth/);
   assert.match(proceduralHeadAnalyzer, /AccessoryKind/);
   assert.match(proceduralHeadAnalyzer, /pairAccessories/);
+  assert.match(proceduralHeadAnalyzer, /CanMergeComponents/);
+  assert.match(proceduralHeadAnalyzer, /ZONE_LIMITS/);
+  assert.doesNotMatch(proceduralHeadAnalyzer, /selectedZones/);
+  for (const metric of [
+    "candidatesByZone", "retainedByZone", "rejectedByOverlap",
+    "rejectedByQuota", "rejectedAsDuplicate",
+  ]) {
+    assert.ok(proceduralHeadAnalyzer.includes(metric), `missing accessory metric: ${metric}`);
+  }
   assert.match(proceduralHead, /CreateMasks/);
+  assert.match(proceduralHead, /NORMALIZED_ANCHORS/);
+  assert.match(proceduralHead, /pairMetrics/);
+  assert.match(proceduralHead, /heightRatio/);
+  assert.doesNotMatch(proceduralHead, /shiftX =/);
+  assert.doesNotMatch(proceduralHead, /ClipToMask\(frontAccessories,\s*size,\s*masks\.frontHair\)/);
+  for (const mask of [
+    "frontAccessoryAllowed", "sideAccessoryAllowed", "backAccessoryAllowed",
+    "protectedEyeMask", "protectedMouthMask", "protectedFacialFeaturesMask",
+  ]) {
+    assert.ok(proceduralHead.includes(mask), `missing canonical head mask: ${mask}`);
+  }
   assert.match(proceduralHead, /secondaryReliable/);
   assert.match(hairColorAnalyzer, /primaryCoverage/);
   assert.match(hairColorAnalyzer, /secondaryCoverage/);
   assert.match(hairColorAnalyzer, /spatialSpan/);
   assert.match(hairColorAnalyzer, /hairCoreMask/);
   assert.match(hairColorAnalyzer, /labelMap/);
+  assert.match(hairColorAnalyzer, /RegularizeHairLabelMap/);
+  assert.match(hairColorAnalyzer, /rawLabelComponents/);
+  assert.match(proceduralOutfitAnalyzer, /AnalyzeSleeveBands/);
+  assert.match(proceduralBody, /masks\.waistband/);
+  assert.match(proceduralBody, /masks\.upperPanels/);
+  assert.match(proceduralBody, /masks\.lowerRuffle/);
+  for (const stage of [
+    "HairLabelMapRaw", "HairLabelMapRegularized", "HairColorMasses",
+    "ProtectedFacialFeatures", "FrontAccessoryAllowed", "SideAccessoryAllowed",
+    "AccessorySelectedPerZone", "AccessoryPairLayout",
+    "AccessoryCompositeBeforeClipping", "AccessoryCompositeAfterClipping",
+    "SleeveBandDescriptors", "SleevesStructured", "LowerGarmentPalette",
+    "LowerGarmentSubregions", "BodyStructured",
+  ]) {
+    assert.ok(proceduralChibi.includes(stage), `missing regularization diagnostic: ${stage}`);
+  }
   assert.doesNotMatch(hairColorAnalyzer, /primary = bucketColor\(buckets\[1\]\)/);
   assert.match(proceduralChibi, /xpcall/);
   assert.match(proceduralChibi, /headImage:Destroy/);
@@ -253,6 +289,10 @@ test("procedural Luau self-test covers synthetic buffer behavior", () => {
   assert.match(proceduralSelfTest, /Procedural fringe contains a wide gap/);
   assert.match(proceduralSelfTest, /Shoulder repair overwrote valid texture/);
   assert.match(proceduralSelfTest, /Central skirt component was not retained/);
+  assert.match(proceduralSelfTest, /Multiple frontLeft accessories were discarded/);
+  assert.match(proceduralSelfTest, /Hair label escaped hairCoreMask/);
+  assert.match(proceduralSelfTest, /Five sleeve bands collapsed below four/);
+  assert.match(proceduralSelfTest, /Fringe covers too much of the eyes/);
 });
 
 test("procedural head owns its alpha and keeps copied pixels debug-only", () => {

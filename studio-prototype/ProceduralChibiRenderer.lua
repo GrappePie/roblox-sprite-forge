@@ -25,17 +25,32 @@ export type DebugStage =
 	| "HairClusters"
 	| "HairCore"
 	| "HairLabelMap"
+	| "HairLabelMapRaw"
+	| "HairLabelMapRegularized"
+	| "HairColorMasses"
 	| "HairMasks"
+	| "ProtectedFacialFeatures"
+	| "FrontAccessoryAllowed"
+	| "SideAccessoryAllowed"
 	| "AccessoryCandidates"
 	| "AccessoryRawCandidates"
 	| "AccessoryMergedGroups"
 	| "AccessoryAnchors"
+	| "AccessorySelectedPerZone"
+	| "AccessoryPairLayout"
+	| "AccessoryCompositeBeforeClipping"
+	| "AccessoryCompositeAfterClipping"
 	| "AccessoryBackLayer"
 	| "AccessorySideLayer"
 	| "AccessoryFrontLayer"
 	| "FringeMask"
 	| "SkirtSourceMask"
 	| "ShoulderRepair"
+	| "SleeveBandDescriptors"
+	| "SleevesStructured"
+	| "LowerGarmentPalette"
+	| "LowerGarmentSubregions"
+	| "BodyStructured"
 	| "HeadWithoutAccessories"
 	| "HeadComposite"
 	| "LegacyCopiedHead"
@@ -93,17 +108,32 @@ local VALID_STAGES: { [string]: boolean } = {
 	HairClusters = true,
 	HairCore = true,
 	HairLabelMap = true,
+	HairLabelMapRaw = true,
+	HairLabelMapRegularized = true,
+	HairColorMasses = true,
 	HairMasks = true,
+	ProtectedFacialFeatures = true,
+	FrontAccessoryAllowed = true,
+	SideAccessoryAllowed = true,
 	AccessoryCandidates = true,
 	AccessoryRawCandidates = true,
 	AccessoryMergedGroups = true,
 	AccessoryAnchors = true,
+	AccessorySelectedPerZone = true,
+	AccessoryPairLayout = true,
+	AccessoryCompositeBeforeClipping = true,
+	AccessoryCompositeAfterClipping = true,
 	AccessoryBackLayer = true,
 	AccessorySideLayer = true,
 	AccessoryFrontLayer = true,
 	FringeMask = true,
 	SkirtSourceMask = true,
 	ShoulderRepair = true,
+	SleeveBandDescriptors = true,
+	SleevesStructured = true,
+	LowerGarmentPalette = true,
+	LowerGarmentSubregions = true,
+	BodyStructured = true,
 	HeadWithoutAccessories = true,
 	HeadComposite = true,
 	LegacyCopiedHead = true,
@@ -491,6 +521,12 @@ function ProceduralChibiRenderer.Create(
 			Raster.CompositeBufferSourceOver(outputPixels, bodyDebug.SkirtSourceMask, outputSize)
 		elseif stage == "ShoulderRepair" then
 			Raster.CompositeBufferSourceOver(outputPixels, bodyDebug.ShoulderRepair, outputSize)
+		elseif stage == "SleeveBandDescriptors"
+			or stage == "SleevesStructured"
+			or stage == "LowerGarmentPalette"
+			or stage == "LowerGarmentSubregions"
+			or stage == "BodyStructured" then
+			Raster.CompositeBufferSourceOver(outputPixels, bodyDebug[stage], outputSize)
 		else
 			Raster.CompositeBufferSourceOver(outputPixels, proceduralBody, outputSize)
 			if stage == "HeadSource" then
@@ -502,8 +538,26 @@ function ProceduralChibiRenderer.Create(
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairCore, outputSize)
 			elseif stage == "HairLabelMap" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairLabelMap, outputSize)
+			elseif stage == "HairLabelMapRaw" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairLabelMapRaw, outputSize)
+			elseif stage == "HairLabelMapRegularized" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairLabelMapRegularized, outputSize)
+			elseif stage == "HairColorMasses" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairColorMasses, outputSize)
 			elseif stage == "HairMasks" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairMasks, outputSize)
+			elseif stage == "ProtectedFacialFeatures" then
+				paintMaskDiagnostic(outputPixels, outputSize, {
+					protected = headResult.masks.protectedFacialFeaturesMask,
+				})
+			elseif stage == "FrontAccessoryAllowed" then
+				paintMaskDiagnostic(outputPixels, outputSize, {
+					allowed = headResult.masks.frontAccessoryAllowed,
+				})
+			elseif stage == "SideAccessoryAllowed" then
+				paintMaskDiagnostic(outputPixels, outputSize, {
+					allowed = headResult.masks.sideAccessoryAllowed,
+				})
 			elseif stage == "AccessoryCandidates" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCandidates, outputSize)
 			elseif stage == "AccessoryRawCandidates" then
@@ -512,6 +566,14 @@ function ProceduralChibiRenderer.Create(
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryMergedGroups, outputSize)
 			elseif stage == "AccessoryAnchors" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryAnchors, outputSize)
+			elseif stage == "AccessorySelectedPerZone" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessorySelectedPerZone, outputSize)
+			elseif stage == "AccessoryPairLayout" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryPairLayout, outputSize)
+			elseif stage == "AccessoryCompositeBeforeClipping" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCompositeBeforeClipping, outputSize)
+			elseif stage == "AccessoryCompositeAfterClipping" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCompositeAfterClipping, outputSize)
 			elseif stage == "AccessoryBackLayer" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.backAccessories, outputSize)
 			elseif stage == "AccessorySideLayer" then
@@ -543,34 +605,7 @@ function ProceduralChibiRenderer.Create(
 			end
 		end
 
-		if stage == "SourceBody"
-			or stage == "SourceRegions"
-			or stage == "BodySingleCopy"
-			or stage == "BodySegments"
-			or stage == "BodyMasks"
-			or stage == "BodyProjected"
-			or stage == "BodyAccents"
-			or stage == "HeadSource"
-			or stage == "HairClusters"
-			or stage == "HairCore"
-			or stage == "HairLabelMap"
-			or stage == "HairMasks"
-			or stage == "AccessoryCandidates"
-			or stage == "AccessoryRawCandidates"
-			or stage == "AccessoryMergedGroups"
-			or stage == "AccessoryAnchors"
-			or stage == "AccessoryBackLayer"
-			or stage == "AccessorySideLayer"
-			or stage == "AccessoryFrontLayer"
-			or stage == "FringeMask"
-			or stage == "SkirtSourceMask"
-			or stage == "ShoulderRepair"
-			or stage == "HeadWithoutAccessories"
-			or stage == "HeadComposite"
-			or stage == "LegacyCopiedHead"
-			or stage == "BeforeFace"
-			or stage == "BeforeFinalize"
-			or stage == "FinalBeforeQuantize" then
+		if stage ~= "Final" then
 			outputImage = allocateImage(outputSize, outputPixels)
 			return outputImage, summarizeMetrics(
 				stage,

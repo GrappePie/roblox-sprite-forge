@@ -1,5 +1,7 @@
 --!strict
 
+local Raster = require(script.Parent:WaitForChild("ProceduralRaster"))
+
 export type HairColors = {
 	primary: Color3,
 	secondary: Color3,
@@ -11,9 +13,15 @@ export type HairColors = {
 	leftTipSecondaryCoverage: number,
 	rightTipSecondaryCoverage: number,
 	hairCoreMask: buffer,
+	rawLabelMap: buffer,
 	labelMap: buffer,
 	hairCoreCoverage: number,
 	hairCoreAspect: number,
+	rawLabelComponents: number,
+	regularizedLabelComponents: number,
+	removedLabelPixels: number,
+	isolatedHighlightPixels: number,
+	isolatedSecondaryPixels: number,
 }
 
 type Bucket = {
@@ -73,6 +81,123 @@ local function percentileColor(primary: Color3, luminances: { number }, percenti
 	local _, saturation, _ = primary:ToHSV()
 	local hue = select(1, primary:ToHSV())
 	return Color3.fromHSV(hue, math.clamp(saturation, 0, 1), math.clamp(luminance, 0.05, 1))
+end
+
+local function cloneBuffer(source: buffer): buffer
+	local result = buffer.create(buffer.len(source))
+	buffer.copy(result, 0, source, 0, buffer.len(source))
+	return result
+end
+
+local function labelIndexAt(labels: buffer, width: number, x: number, y: number, colors: { Color3 }): number
+	local pixelOffset = offset(width, x, y)
+	if buffer.readu8(labels, pixelOffset + 3) == 0 then return 0 end
+	local red = buffer.readu8(labels, pixelOffset)
+	local green = buffer.readu8(labels, pixelOffset + 1)
+	local blue = buffer.readu8(labels, pixelOffset + 2)
+	local best, bestDistance = 1, math.huge
+	for index, color in colors do
+		local distance = rgbDistance(red, green, blue, color)
+		if distance < bestDistance then best, bestDistance = index, distance end
+	end
+	return best
+end
+
+function HairColorAnalyzer.RegularizeHairLabelMap(
+	rawLabels: buffer,
+	size: Vector2,
+	hairCoreMask: buffer,
+	colors: { Color3 }
+): (buffer, { [string]: number })
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local clipped = buffer.create(buffer.len(rawLabels))
+	local rawPixels = 0
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(rawLabels, pixelOffset + 3) > 0
+				and buffer.readu8(hairCoreMask, pixelOffset + 3) > 0 then
+				buffer.copy(clipped, pixelOffset, rawLabels, pixelOffset, 4)
+				rawPixels += 1
+			end
+		end
+	end
+	local regularized = cloneBuffer(clipped)
+	-- A categorical majority pass removes single-pixel confetti without ever
+	-- inventing intermediate RGB values.
+	for _ = 1, 2 do
+		local nextLabels = cloneBuffer(regularized)
+		for y = 1, height - 2 do
+			for x = 1, width - 2 do
+				local pixelOffset = offset(width, x, y)
+				if buffer.readu8(hairCoreMask, pixelOffset + 3) == 0 then continue end
+				local counts = { 0, 0, 0, 0 }
+				for neighborY = y - 1, y + 1 do
+					for neighborX = x - 1, x + 1 do
+						local label = labelIndexAt(regularized, width, neighborX, neighborY, colors)
+						if label > 0 then counts[label] += 1 end
+					end
+				end
+				local current = labelIndexAt(regularized, width, x, y, colors)
+				local best = if current > 0 then current else 1
+				for index = 1, 4 do
+					if counts[index] > counts[best] then best = index end
+				end
+				if counts[best] >= 5 or current == 0 and counts[best] >= 4 then
+					local color = colors[best]
+					buffer.writeu8(nextLabels, pixelOffset, math.round(color.R * 255))
+					buffer.writeu8(nextLabels, pixelOffset + 1, math.round(color.G * 255))
+					buffer.writeu8(nextLabels, pixelOffset + 2, math.round(color.B * 255))
+					buffer.writeu8(nextLabels, pixelOffset + 3, 255)
+				end
+			end
+		end
+		regularized = nextLabels
+	end
+	local rawComponents = 0
+	local regularizedComponents = 0
+	local isolatedHighlightPixels = 0
+	local isolatedSecondaryPixels = 0
+	for label = 1, 4 do
+		local rawMask = buffer.create(buffer.len(rawLabels))
+		local cleanMask = buffer.create(buffer.len(rawLabels))
+		for y = 0, height - 1 do
+			for x = 0, width - 1 do
+				local pixelOffset = offset(width, x, y)
+				if labelIndexAt(clipped, width, x, y, colors) == label then
+					buffer.writeu8(rawMask, pixelOffset + 3, 255)
+				end
+				if labelIndexAt(regularized, width, x, y, colors) == label then
+					buffer.writeu8(cleanMask, pixelOffset + 3, 255)
+				end
+			end
+		end
+		rawComponents += #Raster.ConnectedComponents(rawMask, size, nil, 1, 8)
+		local components = Raster.ConnectedComponents(cleanMask, size, nil, 1, 8)
+		for _, component in components do
+			if component.area <= 2 then
+				for _, pixel in component.pixels do
+					buffer.writeu8(regularized, offset(width, pixel.x, pixel.y) + 3, 0)
+				end
+			else
+				regularizedComponents += 1
+			end
+		end
+	end
+	local finalPixels = 0
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			if buffer.readu8(regularized, offset(width, x, y) + 3) > 0 then finalPixels += 1 end
+		end
+	end
+	return regularized, {
+		rawLabelComponents = rawComponents,
+		regularizedLabelComponents = regularizedComponents,
+		removedLabelPixels = math.max(0, rawPixels - finalPixels),
+		isolatedHighlightPixels = isolatedHighlightPixels,
+		isolatedSecondaryPixels = isolatedSecondaryPixels,
+	}
 end
 
 function HairColorAnalyzer.Analyze(
@@ -209,9 +334,15 @@ function HairColorAnalyzer.Analyze(
 			leftTipSecondaryCoverage = 0,
 			rightTipSecondaryCoverage = 0,
 			hairCoreMask = emptyMask,
+			rawLabelMap = buffer.create(width * height * 4),
 			labelMap = buffer.create(width * height * 4),
 			hairCoreCoverage = 0,
 			hairCoreAspect = 0.78,
+			rawLabelComponents = 0,
+			regularizedLabelComponents = 0,
+			removedLabelPixels = 0,
+			isolatedHighlightPixels = 0,
+			isolatedSecondaryPixels = 0,
 		}
 	end
 
@@ -375,6 +506,14 @@ function HairColorAnalyzer.Analyze(
 		end
 	end
 	hairCoreMask = retained
+	local rawLabelMap = labelMap
+	local labelMetrics
+	labelMap, labelMetrics = HairColorAnalyzer.RegularizeHairLabelMap(
+		rawLabelMap,
+		size,
+		hairCoreMask,
+		{ primary, secondary, highlight, shadow }
+	)
 	local coreAspect = if corePixels > 0
 		then (coreMaxX - coreMinX + 1) / math.max(1, coreMaxY - coreMinY + 1)
 		else 0.78
@@ -389,9 +528,15 @@ function HairColorAnalyzer.Analyze(
 		leftTipSecondaryCoverage = if secondaryBucket then secondaryBucket.leftTips / math.max(1, secondaryBucket.tips) else 0,
 		rightTipSecondaryCoverage = if secondaryBucket then secondaryBucket.rightTips / math.max(1, secondaryBucket.tips) else 0,
 		hairCoreMask = hairCoreMask,
+		rawLabelMap = rawLabelMap,
 		labelMap = labelMap,
 		hairCoreCoverage = corePixels / math.max(1, boundsWidth * boundsHeight),
 		hairCoreAspect = coreAspect,
+		rawLabelComponents = labelMetrics.rawLabelComponents,
+		regularizedLabelComponents = labelMetrics.regularizedLabelComponents,
+		removedLabelPixels = labelMetrics.removedLabelPixels,
+		isolatedHighlightPixels = labelMetrics.isolatedHighlightPixels,
+		isolatedSecondaryPixels = labelMetrics.isolatedSecondaryPixels,
 	}
 end
 

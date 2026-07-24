@@ -47,10 +47,27 @@ export type Analysis = {
 		mergedComponents: number,
 		acceptedComponents: number,
 		byZone: { [string]: number },
+		candidatesByZone: { [string]: number },
+		retainedByZone: { [string]: number },
+		rejectedByOverlap: number,
+		rejectedByQuota: number,
+		rejectedByFace: number,
+		rejectedAsDuplicate: number,
+		mergedPairs: number,
 	},
 }
 
 local ProceduralChibiHeadAnalyzer = {}
+
+local ZONE_LIMITS: { [string]: number } = {
+	topLeft = 2,
+	topRight = 2,
+	sideLeft = 2,
+	sideRight = 2,
+	centerTop = 2,
+	frontLeft = 4,
+	frontRight = 4,
+}
 
 local function offset(width: number, x: number, y: number): number
 	return (y * width + x) * 4
@@ -71,13 +88,13 @@ end
 local function zoneFor(point: Vector2, bounds: Bounds): AccessoryAnchor
 	local normalizedX = (point.X - bounds.minX) / math.max(1, bounds.maxX - bounds.minX)
 	local normalizedY = (point.Y - bounds.minY) / math.max(1, bounds.maxY - bounds.minY)
-	if normalizedY < 0.3 then
+	if normalizedY < 0.22 then
 		if normalizedX < 0.38 then return "topLeft" end
 		if normalizedX > 0.62 then return "topRight" end
 		return "centerTop"
 	end
-	if normalizedX < 0.3 then return "sideLeft" end
-	if normalizedX > 0.7 then return "sideRight" end
+	if normalizedX < 0.22 then return "sideLeft" end
+	if normalizedX > 0.78 then return "sideRight" end
 	if normalizedX < 0.5 then return "frontLeft" end
 	return "frontRight"
 end
@@ -117,24 +134,96 @@ local function componentGap(left: ConnectedComponent, right: ConnectedComponent)
 	return math.max(gapX, gapY)
 end
 
-local function mergeComponents(components: { ConnectedComponent }, bounds: Bounds): { ConnectedComponent }
+local function boundsArea(bounds: Bounds): number
+	return (bounds.maxX - bounds.minX + 1) * (bounds.maxY - bounds.minY + 1)
+end
+
+local function combinedBounds(left: Bounds, right: Bounds): Bounds
+	return {
+		minX = math.min(left.minX, right.minX),
+		minY = math.min(left.minY, right.minY),
+		maxX = math.max(left.maxX, right.maxX),
+		maxY = math.max(left.maxY, right.maxY),
+	}
+end
+
+local function boundsIntersectionRatio(left: Bounds, right: Bounds): number
+	local minX = math.max(left.minX, right.minX)
+	local minY = math.max(left.minY, right.minY)
+	local maxX = math.min(left.maxX, right.maxX)
+	local maxY = math.min(left.maxY, right.maxY)
+	if minX > maxX or minY > maxY then return 0 end
+	local intersection = (maxX - minX + 1) * (maxY - minY + 1)
+	return intersection / math.max(1, math.min(boundsArea(left), boundsArea(right)))
+end
+
+local function averageColor(component: ConnectedComponent): Color3
+	local red, green, blue = 0, 0, 0
+	for _, pixel in component.pixels do
+		red += pixel.r
+		green += pixel.g
+		blue += pixel.b
+	end
+	local count = math.max(1, #component.pixels)
+	return Color3.fromRGB(math.round(red / count), math.round(green / count), math.round(blue / count))
+end
+
+function ProceduralChibiHeadAnalyzer.CanMergeComponents(
+	left: ConnectedComponent,
+	right: ConnectedComponent,
+	context: { bounds: Bounds, protectedFace: Bounds? }
+): boolean
+	if zoneFor(left.centroid, context.bounds) ~= zoneFor(right.centroid, context.bounds) then return false end
+	local gap = componentGap(left, right)
+	if gap > 2 then return false end
+	local areaRatio = math.max(left.area, right.area) / math.max(1, math.min(left.area, right.area))
+	if areaRatio > 3.2 then return false end
+	local leftColor = averageColor(left)
+	local rightColor = averageColor(right)
+	local luminanceLeft = leftColor.R * 0.3 + leftColor.G * 0.59 + leftColor.B * 0.11
+	local luminanceRight = rightColor.R * 0.3 + rightColor.G * 0.59 + rightColor.B * 0.11
+	if math.abs(luminanceLeft - luminanceRight) > 0.24 then return false end
+	if colorDistance(
+		math.round(leftColor.R * 255),
+		math.round(leftColor.G * 255),
+		math.round(leftColor.B * 255),
+		rightColor
+	) > 62 then return false end
+	local combined = combinedBounds(left.bounds, right.bounds)
+	local growth = boundsArea(combined) / math.max(1, boundsArea(left.bounds) + boundsArea(right.bounds))
+	if growth > 2.15 then return false end
+	if context.protectedFace and intersects(combined, context.protectedFace)
+		and not intersects(left.bounds, context.protectedFace)
+		and not intersects(right.bounds, context.protectedFace) then
+		return false
+	end
+	return true
+end
+
+local function mergeComponents(
+	components: { ConnectedComponent },
+	bounds: Bounds,
+	protectedFace: Bounds?
+): ({ ConnectedComponent }, number)
 	local groups: { { ConnectedComponent } } = {}
+	local mergeCount = 0
 	for _, component in components do
-		local zone = zoneFor(component.centroid, bounds)
 		local destination: { ConnectedComponent }? = nil
 		for _, group in groups do
-			if zoneFor(group[1].centroid, bounds) == zone then
-				for _, member in group do
-					if componentGap(member, component) <= 3 then
-						destination = group
-						break
-					end
+			for _, member in group do
+				if ProceduralChibiHeadAnalyzer.CanMergeComponents(member, component, {
+					bounds = bounds,
+					protectedFace = protectedFace,
+				}) then
+					destination = group
+					break
 				end
 			end
 			if destination then break end
 		end
 		if destination then
 			table.insert(destination, component)
+			mergeCount += 1
 		else
 			table.insert(groups, { component })
 		end
@@ -167,7 +256,7 @@ local function mergeComponents(components: { ConnectedComponent }, bounds: Bound
 		})
 	end
 	table.sort(merged, function(left, right) return left.area > right.area end)
-	return merged
+	return merged, mergeCount
 end
 
 local function componentMask(components: { ConnectedComponent }, size: Vector2): buffer
@@ -278,14 +367,16 @@ function ProceduralChibiHeadAnalyzer.Analyze(
 			if candidate then buffer.writeu8(rawCandidateMask, pixelOffset + 3, 255) end
 		end
 	end
-	local closed = Raster.CardinalErode(Raster.CardinalDilate(rawCandidateMask, size, 1), size, 1)
-	local rawComponents = Raster.ConnectedComponents(closed, size, pixels, 1, 8)
-	local mergedComponents = mergeComponents(rawComponents, bounds)
+	-- Component identity comes from the unclosed observation. Global closing
+	-- can bridge neighboring clips before color-aware CanMergeComponents gets
+	-- a chance to distinguish them.
+	local rawComponents = Raster.ConnectedComponents(rawCandidateMask, size, pixels, 1, 8)
+	local sourceArea = boundsWidth * boundsHeight
+	local mergedComponents, mergedPairs = mergeComponents(rawComponents, bounds, protectedFace)
 	local mergedCandidateMask = componentMask(mergedComponents, size)
 	local accepted: { AccessoryCandidate } = {}
 	local rejectedFace = 0
-	local sourceArea = boundsWidth * boundsHeight
-	local byZone: { [string]: number } = {}
+	local candidatesByZone: { [string]: number } = {}
 	for _, component in mergedComponents do
 		if component.area < math.max(3, sourceArea * 0.00012) or component.area > sourceArea * 0.2 then continue end
 		local componentWidth = component.bounds.maxX - component.bounds.minX + 1
@@ -301,6 +392,7 @@ function ProceduralChibiHeadAnalyzer.Analyze(
 			continue
 		end
 		local zone = zoneFor(component.centroid, bounds)
+		candidatesByZone[zone] = (candidatesByZone[zone] or 0) + 1
 		local kind, depth = classify(zone, component)
 		local borderTouch = if component.bounds.minX <= bounds.minX + 1
 				or component.bounds.maxX >= bounds.maxX - 1
@@ -326,25 +418,44 @@ function ProceduralChibiHeadAnalyzer.Analyze(
 				colors = representativeColors(component),
 				component = component,
 			})
-			byZone[zone] = (byZone[zone] or 0) + 1
-			if #accepted >= maximumComponents then break end
 		end
 	end
 	table.sort(accepted, function(left, right)
 		return left.confidence > right.confidence
 	end)
 	local selected: { AccessoryCandidate } = {}
-	local selectedZones: { [string]: boolean } = {}
+	local retainedByZone: { [string]: number } = {}
+	local rejectedByOverlap = 0
+	local rejectedByQuota = 0
+	local rejectedAsDuplicate = 0
 	for _, accessory in accepted do
-		if not selectedZones[accessory.zone] then
-			selectedZones[accessory.zone] = true
+		local zoneCount = retainedByZone[accessory.zone] or 0
+		if zoneCount >= (ZONE_LIMITS[accessory.zone] or 1) then
+			rejectedByQuota += 1
+			continue
+		end
+		local overlaps = false
+		local duplicate = false
+		for _, retained in selected do
+			if retained.zone ~= accessory.zone then continue end
+			local overlap = boundsIntersectionRatio(retained.bounds, accessory.bounds)
+			if overlap >= 0.78 then
+				duplicate = true
+				break
+			elseif overlap >= 0.42 then
+				overlaps = true
+				break
+			end
+		end
+		if duplicate then
+			rejectedAsDuplicate += 1
+		elseif overlaps then
+			rejectedByOverlap += 1
+		else
 			table.insert(selected, accessory)
+			retainedByZone[accessory.zone] = zoneCount + 1
 		end
 		if #selected >= maximumComponents then break end
-	end
-	byZone = {}
-	for _, accessory in selected do
-		byZone[accessory.zone] = (byZone[accessory.zone] or 0) + 1
 	end
 	pairAccessories(selected, bounds)
 	return {
@@ -361,7 +472,14 @@ function ProceduralChibiHeadAnalyzer.Analyze(
 			rawComponents = #rawComponents,
 			mergedComponents = #mergedComponents,
 			acceptedComponents = #selected,
-			byZone = byZone,
+			byZone = retainedByZone,
+			candidatesByZone = candidatesByZone,
+			retainedByZone = retainedByZone,
+			rejectedByOverlap = rejectedByOverlap,
+			rejectedByQuota = rejectedByQuota,
+			rejectedByFace = rejectedFace,
+			rejectedAsDuplicate = rejectedAsDuplicate,
+			mergedPairs = mergedPairs,
 		},
 	}
 end
