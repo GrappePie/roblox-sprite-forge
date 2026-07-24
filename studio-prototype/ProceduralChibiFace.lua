@@ -9,6 +9,11 @@ export type HairColors = {
 	secondary: Color3,
 	highlight: Color3,
 	shadow: Color3,
+	primaryCoverage: number?,
+	secondaryCoverage: number?,
+	secondaryReliable: boolean?,
+	leftTipSecondaryCoverage: number?,
+	rightTipSecondaryCoverage: number?,
 }
 
 export type PaintedColors = {
@@ -23,6 +28,7 @@ export type PaintedColors = {
 	eyeOutline: Color3,
 	highlight: Color3,
 	blush: Color3,
+	mouth: Color3,
 }
 
 local ProceduralChibiFace = {}
@@ -35,24 +41,12 @@ local function colorBytes(color: Color3): (number, number, number)
 	return math.round(color.R * 255), math.round(color.G * 255), math.round(color.B * 255)
 end
 
-local function writeColor(
-	pixels: buffer,
-	size: Vector2,
-	x: number,
-	y: number,
-	color: Color3
-)
+local function writeColor(pixels: buffer, size: Vector2, x: number, y: number, color: Color3)
 	local width = math.floor(size.X)
 	local height = math.floor(size.Y)
-	if x < 0 or y < 0 or x >= width or y >= height then
-		return
-	end
+	if x < 0 or y < 0 or x >= width or y >= height then return end
 	local red, green, blue = colorBytes(color)
-	local pixelOffset = offset(width, x, y)
-	buffer.writeu8(pixels, pixelOffset, red)
-	buffer.writeu8(pixels, pixelOffset + 1, green)
-	buffer.writeu8(pixels, pixelOffset + 2, blue)
-	buffer.writeu8(pixels, pixelOffset + 3, 255)
+	Raster.SourceOverPixel(pixels, width, height, x, y, { r = red, g = green, b = blue, a = 255 })
 end
 
 local function fillEllipse(
@@ -75,55 +69,93 @@ local function fillEllipse(
 	end
 end
 
-local function faceGeometry(headBounds: Bounds): {
-	centerX: number,
-	centerY: number,
-	radiusX: number,
-	radiusY: number,
-	headWidth: number,
-	headHeight: number,
+local function geometry(headBounds: Bounds): {
+	centerX: number, width: number, height: number,
+	faceTop: number, faceBottom: number, faceLeft: number, faceRight: number,
 }
-	local headWidth = headBounds.maxX - headBounds.minX + 1
-	local headHeight = headBounds.maxY - headBounds.minY + 1
+	local width = headBounds.maxX - headBounds.minX + 1
+	local height = headBounds.maxY - headBounds.minY + 1
+	local centerX = math.floor((headBounds.minX + headBounds.maxX) / 2)
 	return {
-		centerX = math.floor((headBounds.minX + headBounds.maxX) / 2),
-		centerY = headBounds.minY + math.floor(headHeight * 0.67),
-		radiusX = math.max(8, math.floor(headWidth * 0.26)),
-		radiusY = math.max(7, math.floor(headHeight * 0.22)),
-		headWidth = headWidth,
-		headHeight = headHeight,
+		centerX = centerX,
+		width = width,
+		height = height,
+		faceTop = headBounds.minY + math.floor(height * 0.38),
+		faceBottom = headBounds.minY + math.floor(height * 0.91),
+		faceLeft = centerX - math.floor(width * 0.25),
+		faceRight = centerX + math.floor(width * 0.25),
 	}
 end
 
-function ProceduralChibiFace.BackHairLayer(
-	size: Vector2,
-	headBounds: Bounds,
-	hairColors: HairColors
-): buffer
-	-- The copied AvatarThumbnail head remains the authoritative back-hair and
-	-- accessory layer during this stage. This transparent layer is intentional.
-	local _ = headBounds
-	local _hair = hairColors
-	return buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
+local function polygon(layer: buffer, size: Vector2, points: { Vector2 }, color: Color3)
+	local mask = buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
+	Raster.FillPolygon(mask, size, points)
+	local red, green, blue = colorBytes(color)
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) > 0 then
+				Raster.SourceOverPixel(layer, width, height, x, y, { r = red, g = green, b = blue, a = 255 })
+			end
+		end
+	end
 end
 
-function ProceduralChibiFace.FaceLayer(
-	size: Vector2,
-	headBounds: Bounds,
-	skinColor: Color3
-): buffer
+function ProceduralChibiFace.BackHairLayer(size: Vector2, headBounds: Bounds, hairColors: HairColors): buffer
 	local layer = buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
-	local geometry = faceGeometry(headBounds)
-	-- This writes into a transparent buffer and creates its own alpha.
-	fillEllipse(
+	local g = geometry(headBounds)
+	local top = headBounds.minY + math.floor(g.height * 0.1)
+	local bottom = headBounds.minY + math.floor(g.height * 0.98)
+	polygon(layer, size, {
+		Vector2.new(g.centerX - math.floor(g.width * 0.31), top + math.floor(g.height * 0.18)),
+		Vector2.new(g.centerX - math.floor(g.width * 0.25), top + math.floor(g.height * 0.08)),
+		Vector2.new(g.centerX - math.floor(g.width * 0.14), top),
+		Vector2.new(g.centerX, top - 2),
+		Vector2.new(g.centerX + math.floor(g.width * 0.14), top),
+		Vector2.new(g.centerX + math.floor(g.width * 0.25), top + math.floor(g.height * 0.08)),
+		Vector2.new(g.centerX + math.floor(g.width * 0.31), top + math.floor(g.height * 0.18)),
+		Vector2.new(g.centerX + math.floor(g.width * 0.34), bottom - math.floor(g.height * 0.18)),
+		Vector2.new(g.centerX + math.floor(g.width * 0.25), bottom),
+		Vector2.new(g.centerX, bottom - math.floor(g.height * 0.04)),
+		Vector2.new(g.centerX - math.floor(g.width * 0.25), bottom),
+		Vector2.new(g.centerX - math.floor(g.width * 0.34), bottom - math.floor(g.height * 0.18)),
+	}, hairColors.primary)
+	local shadowY = headBounds.minY + math.floor(g.height * 0.73)
+	Raster.DrawLine(
 		layer,
 		size,
-		geometry.centerX,
-		geometry.centerY,
-		geometry.radiusX,
-		geometry.radiusY,
-		skinColor
+		Vector2.new(g.centerX - math.floor(g.width * 0.3), shadowY),
+		Vector2.new(g.centerX - math.floor(g.width * 0.23), bottom - 2),
+		hairColors.shadow
 	)
+	Raster.DrawLine(
+		layer,
+		size,
+		Vector2.new(g.centerX + math.floor(g.width * 0.3), shadowY),
+		Vector2.new(g.centerX + math.floor(g.width * 0.23), bottom - 2),
+		hairColors.shadow
+	)
+	return layer
+end
+
+function ProceduralChibiFace.FaceLayer(size: Vector2, headBounds: Bounds, skinColor: Color3): buffer
+	local layer = buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
+	local g = geometry(headBounds)
+	-- Flat cheeks and a small chin read more like a drawn chibi face than a
+	-- fully visible ellipse; front hair will cover the forehead.
+	polygon(layer, size, {
+		Vector2.new(g.faceLeft + 4, g.faceTop),
+		Vector2.new(g.faceRight - 4, g.faceTop),
+		Vector2.new(g.faceRight + 2, g.faceTop + math.floor(g.height * 0.14)),
+		Vector2.new(g.faceRight, g.faceBottom - math.floor(g.height * 0.12)),
+		Vector2.new(g.centerX + math.floor(g.width * 0.12), g.faceBottom),
+		Vector2.new(g.centerX, g.faceBottom + 2),
+		Vector2.new(g.centerX - math.floor(g.width * 0.12), g.faceBottom),
+		Vector2.new(g.faceLeft, g.faceBottom - math.floor(g.height * 0.12)),
+		Vector2.new(g.faceLeft - 2, g.faceTop + math.floor(g.height * 0.14)),
+	}, skinColor)
 	return layer
 end
 
@@ -134,58 +166,41 @@ function ProceduralChibiFace.FacialFeaturesLayer(
 	eyeColor: Color3
 ): (buffer, PaintedColors)
 	local layer = buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
-	local geometry = faceGeometry(headBounds)
+	local g = geometry(headBounds)
 	local skinShadow = skinColor:Lerp(Color3.fromRGB(125, 74, 86), 0.18)
 	local eyeShadow = eyeColor:Lerp(Color3.fromRGB(20, 15, 31), 0.48)
 	local eyeOutline = Color3.fromRGB(35, 29, 48)
 	local highlight = Color3.fromRGB(255, 250, 255)
 	local blush = Color3.fromRGB(238, 142, 157)
-	local eyeOffset = math.max(6, math.floor(geometry.headWidth * 0.12))
-	local eyeRadiusX = math.max(3, math.floor(geometry.headWidth * 0.055))
-	local eyeRadiusY = math.max(4, math.floor(geometry.headHeight * 0.095))
-	local eyeY = geometry.centerY - math.floor(geometry.radiusY * 0.16)
-	for _, eyeX in { geometry.centerX - eyeOffset, geometry.centerX + eyeOffset } do
-		fillEllipse(layer, size, eyeX, eyeY, eyeRadiusX + 1, eyeRadiusY + 1, eyeOutline)
-		fillEllipse(layer, size, eyeX, eyeY, eyeRadiusX, eyeRadiusY, eyeColor)
-		fillEllipse(
-			layer,
-			size,
-			eyeX,
-			eyeY + math.floor(eyeRadiusY * 0.45),
-			math.max(1, eyeRadiusX - 1),
-			math.max(1, math.floor(eyeRadiusY * 0.35)),
-			eyeShadow
-		)
-		writeColor(
-			layer,
-			size,
-			eyeX - math.max(1, math.floor(eyeRadiusX * 0.35)),
-			eyeY - math.max(1, math.floor(eyeRadiusY * 0.35)),
-			highlight
-		)
-		for lashX = eyeX - eyeRadiusX - 1, eyeX + eyeRadiusX + 1 do
-			writeColor(layer, size, lashX, eyeY - eyeRadiusY, eyeOutline)
-		end
+	local mouth = Color3.fromRGB(137, 68, 91)
+	local eyeOffset = math.max(9, math.floor(g.width * 0.125))
+	local eyeRadiusX = math.max(4, math.floor(g.width * 0.058))
+	local eyeRadiusY = math.max(5, math.floor(g.height * 0.092))
+	local eyeY = g.faceTop + math.floor(g.height * 0.25)
+	for _, direction in { -1, 1 } do
+		local eyeX = g.centerX + eyeOffset * direction
+		fillEllipse(layer, size, eyeX, eyeY, eyeRadiusX + 1, eyeRadiusY, eyeOutline)
+		fillEllipse(layer, size, eyeX, eyeY + 1, eyeRadiusX, eyeRadiusY - 1, eyeColor)
+		fillEllipse(layer, size, eyeX, eyeY + math.floor(eyeRadiusY * 0.5), eyeRadiusX - 1, 2, eyeShadow)
+		fillEllipse(layer, size, eyeX, eyeY + eyeRadiusY - 1, eyeRadiusX - 2, 1, eyeColor:Lerp(highlight, 0.48))
+		fillEllipse(layer, size, eyeX, eyeY + 1, math.max(1, eyeRadiusX - 2), math.max(2, eyeRadiusY - 2), eyeShadow)
+		writeColor(layer, size, eyeX - 2, eyeY - 2, highlight)
+		writeColor(layer, size, eyeX - 1, eyeY - 2, highlight)
+		writeColor(layer, size, eyeX + 2, eyeY + 1, highlight)
+		-- Thick upper lid, thinner lower lid and outward lashes.
+		Raster.DrawLine(layer, size, Vector2.new(eyeX - eyeRadiusX - 1, eyeY - eyeRadiusY), Vector2.new(eyeX + eyeRadiusX, eyeY - eyeRadiusY + 1), eyeOutline)
+		Raster.DrawLine(layer, size, Vector2.new(eyeX - eyeRadiusX, eyeY + eyeRadiusY), Vector2.new(eyeX + eyeRadiusX - 1, eyeY + eyeRadiusY), eyeOutline)
+		local lashStart = Vector2.new(eyeX + eyeRadiusX * direction, eyeY - eyeRadiusY + 1)
+		Raster.DrawLine(layer, size, lashStart, lashStart + Vector2.new(3 * direction, -2), eyeOutline)
 	end
-	local blushY = geometry.centerY + math.floor(geometry.radiusY * 0.35)
-	for _, blushX in {
-		geometry.centerX - eyeOffset - eyeRadiusX - 2,
-		geometry.centerX + eyeOffset + eyeRadiusX + 2,
-	} do
-		fillEllipse(layer, size, blushX, blushY, 2, 1, blush)
+	local blushY = eyeY + eyeRadiusY + math.max(3, math.floor(g.height * 0.07))
+	for _, blushX in { g.centerX - eyeOffset - eyeRadiusX - 2, g.centerX + eyeOffset + eyeRadiusX + 2 } do
+		fillEllipse(layer, size, blushX, blushY, 3, 1, blush)
 	end
-	local mouthY = geometry.centerY + math.floor(geometry.radiusY * 0.48)
-	for x = geometry.centerX - 2, geometry.centerX + 2 do
-		writeColor(
-			layer,
-			size,
-			x,
-			if x == geometry.centerX - 2 or x == geometry.centerX + 2
-				then mouthY - 1
-				else mouthY,
-			skinShadow
-		)
-	end
+	local mouthY = g.faceBottom - math.floor(g.height * 0.12)
+	Raster.DrawLine(layer, size, Vector2.new(g.centerX - 3, mouthY - 1), Vector2.new(g.centerX, mouthY + 1), mouth)
+	Raster.DrawLine(layer, size, Vector2.new(g.centerX, mouthY + 1), Vector2.new(g.centerX + 3, mouthY - 1), mouth)
+	writeColor(layer, size, g.centerX, mouthY - 5, skinShadow)
 	return layer, {
 		skin = skinColor,
 		skinShadow = skinShadow,
@@ -198,43 +213,41 @@ function ProceduralChibiFace.FacialFeaturesLayer(
 		eyeOutline = eyeOutline,
 		highlight = highlight,
 		blush = blush,
+		mouth = mouth,
 	}
 end
 
-function ProceduralChibiFace.FrontHairLayer(
-	size: Vector2,
-	headBounds: Bounds,
-	hairColors: HairColors
-): buffer
+function ProceduralChibiFace.FrontHairLayer(size: Vector2, headBounds: Bounds, hairColors: HairColors): buffer
 	local layer = buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
-	local geometry = faceGeometry(headBounds)
-	local fringeHalfWidth = math.max(10, math.floor(geometry.headWidth * 0.2))
-	local fringeStartY = headBounds.minY + math.floor(geometry.headHeight * 0.43)
-	for x = geometry.centerX - fringeHalfWidth, geometry.centerX + fringeHalfWidth do
-		local normalized = math.abs(x - geometry.centerX) / fringeHalfWidth
-		local strand = math.floor((1 - normalized) * geometry.radiusY * 0.72)
-		if math.floor((x - geometry.centerX + fringeHalfWidth) / 5) % 2 == 0 then
-			strand += 2
-		end
-		for y = fringeStartY, fringeStartY + strand do
-			writeColor(
-				layer,
-				size,
-				x,
-				y,
-				if y == fringeStartY + strand then hairColors.shadow else hairColors.primary
-			)
-		end
+	local g = geometry(headBounds)
+	local fringeTop = headBounds.minY + math.floor(g.height * 0.3)
+	local fringeBottom = headBounds.minY + math.floor(g.height * 0.67)
+	local fringeLeft = g.centerX - math.floor(g.width * 0.25)
+	local fringeRight = g.centerX + math.floor(g.width * 0.25)
+	local strandWidth = math.max(4, math.floor((fringeRight - fringeLeft) / 6))
+	for strand = 0, 5 do
+		local left = fringeLeft + strand * strandWidth
+		local right = if strand == 5 then fringeRight else left + strandWidth + 1
+		local centerDistance = math.abs(strand - 2.5)
+		local tip = fringeBottom + math.floor((2.5 - centerDistance) * 3)
+		polygon(layer, size, {
+			Vector2.new(left, fringeTop + math.abs(strand - 3)),
+			Vector2.new(right, fringeTop),
+			Vector2.new(math.floor((left + right) / 2), tip),
+		}, if strand == 0 or strand == 5 then hairColors.shadow else hairColors.primary)
 	end
+	local highlightY = headBounds.minY + math.floor(g.height * 0.24)
+	Raster.DrawLine(
+		layer,
+		size,
+		Vector2.new(g.centerX - math.floor(g.width * 0.16), highlightY + 3),
+		Vector2.new(g.centerX + math.floor(g.width * 0.11), highlightY),
+		hairColors.highlight
+	)
 	return layer
 end
 
-function ProceduralChibiFace.AccessoryLayer(
-	size: Vector2,
-	headBounds: Bounds
-): buffer
-	-- Accessories stay in the copied head until connected-component extraction
-	-- is introduced. No heuristic pixel restoration is performed here.
+function ProceduralChibiFace.AccessoryLayer(size: Vector2, headBounds: Bounds): buffer
 	local _ = headBounds
 	return buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
 end
@@ -249,8 +262,7 @@ function ProceduralChibiFace.Paint(
 	local result = buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
 	local backHair = ProceduralChibiFace.BackHairLayer(size, headBounds, hairColors)
 	local face = ProceduralChibiFace.FaceLayer(size, headBounds, skinColor)
-	local features, colors =
-		ProceduralChibiFace.FacialFeaturesLayer(size, headBounds, skinColor, eyeColor)
+	local features, colors = ProceduralChibiFace.FacialFeaturesLayer(size, headBounds, skinColor, eyeColor)
 	local frontHair = ProceduralChibiFace.FrontHairLayer(size, headBounds, hairColors)
 	local accessory = ProceduralChibiFace.AccessoryLayer(size, headBounds)
 	for _, layer in { backHair, face, features, frontHair, accessory } do

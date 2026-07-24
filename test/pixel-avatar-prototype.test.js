@@ -32,6 +32,18 @@ const proceduralFace = fs.readFileSync(
   "studio-prototype/ProceduralChibiFace.lua",
   "utf8",
 );
+const proceduralHeadAnalyzer = fs.readFileSync(
+  "studio-prototype/ProceduralChibiHeadAnalyzer.lua",
+  "utf8",
+);
+const proceduralHead = fs.readFileSync(
+  "studio-prototype/ProceduralChibiHead.lua",
+  "utf8",
+);
+const hairColorAnalyzer = fs.readFileSync(
+  "studio-prototype/HairColorAnalyzer.lua",
+  "utf8",
+);
 const proceduralSelfTest = fs.readFileSync(
   "studio-prototype/ProceduralChibiSelfTest.lua",
   "utf8",
@@ -65,6 +77,11 @@ test("Roblox-only pixel avatar keeps centralized requested settings", () => {
     "ProceduralChibiPaletteSize",
     "ProceduralChibiAlphaThreshold",
     "ProceduralChibiHeadHeightRatio",
+    "ProceduralChibiHeadWidthRatio",
+    "ProceduralChibiHairSecondaryMinimumCoverage",
+    "ProceduralChibiAccessoryMinimumConfidence",
+    "ProceduralChibiMaxAccessoryComponents",
+    "ProceduralChibiHeadFallbackEnabled",
     "ProceduralChibiDebugStage",
     "ProceduralChibiRunSelfTest",
     "ProceduralChibiDebugStages",
@@ -148,6 +165,21 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralChibi, /BodySegments/);
   assert.match(proceduralChibi, /BeforeFace/);
   assert.match(proceduralChibi, /BeforeFinalize/);
+  assert.match(proceduralChibi, /HeadSource/);
+  assert.match(proceduralChibi, /HairClusters/);
+  assert.match(proceduralChibi, /HairMasks/);
+  assert.match(proceduralChibi, /AccessoryCandidates/);
+  assert.match(proceduralChibi, /HeadWithoutAccessories/);
+  assert.match(proceduralChibi, /HeadComposite/);
+  assert.match(proceduralChibi, /LegacyCopiedHead/);
+  assert.match(proceduralHeadAnalyzer, /protectedFace/);
+  assert.match(proceduralHeadAnalyzer, /ConnectedComponents/);
+  assert.match(proceduralHead, /CreateMasks/);
+  assert.match(proceduralHead, /secondaryReliable/);
+  assert.match(hairColorAnalyzer, /primaryCoverage/);
+  assert.match(hairColorAnalyzer, /secondaryCoverage/);
+  assert.match(hairColorAnalyzer, /spatialSpan/);
+  assert.doesNotMatch(hairColorAnalyzer, /primary = bucketColor\(buckets\[1\]\)/);
   assert.match(proceduralChibi, /xpcall/);
   assert.match(proceduralChibi, /headImage:Destroy/);
   assert.match(proceduralChibi, /avatarImage:Destroy/);
@@ -191,6 +223,26 @@ test("procedural Luau self-test covers synthetic buffer behavior", () => {
   assert.match(proceduralSelfTest, /Left arm is not angled outward/);
   assert.match(proceduralSelfTest, /outside canonical masks/);
   assert.match(proceduralSelfTest, /fallback ratio is unreasonable/);
+  assert.match(proceduralSelfTest, /syntheticHead/);
+  assert.match(proceduralSelfTest, /Secondary tip color was not detected/);
+  assert.match(proceduralSelfTest, /Original dark eyes survived as accessory candidates/);
+  assert.match(proceduralSelfTest, /BackHairLayer is empty/);
+  assert.match(proceduralSelfTest, /Synthetic head unexpectedly used legacy fallback/);
+});
+
+test("procedural head owns its alpha and keeps copied pixels debug-only", () => {
+  assert.match(proceduralHead, /Face\.BackHairLayer/);
+  assert.match(proceduralHead, /Face\.FaceLayer/);
+  assert.match(proceduralHead, /Face\.FacialFeaturesLayer/);
+  assert.match(proceduralHead, /Face\.FrontHairLayer/);
+  assert.match(proceduralHead, /projectAccessories/);
+  assert.match(proceduralRaster, /CardinalDilate/);
+  assert.match(proceduralRaster, /CardinalErode/);
+  assert.match(proceduralRaster, /ProjectComponent/);
+  assert.match(proceduralChibi, /stage == "LegacyCopiedHead"/);
+  assert.match(proceduralChibi, /fallbackEnabled and lowConfidence/);
+  assert.match(controller, /head procedural=%s/);
+  assert.match(controller, /headFallback=%s/);
 });
 
 test("thumbnail pipeline performs real raster reduction and nearest-neighbor display", () => {

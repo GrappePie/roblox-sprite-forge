@@ -87,6 +87,14 @@ local function colorBytes(color: Color3): (number, number, number)
 	return math.round(color.R * 255), math.round(color.G * 255), math.round(color.B * 255)
 end
 
+local function shoulderColor(region: SourceRegion): Color3
+	local _, primarySaturation, primaryValue = region.fallbackPrimary:ToHSV()
+	local _, secondarySaturation, secondaryValue = region.fallbackSecondary:ToHSV()
+	local primaryScore = primaryValue * 0.62 + primarySaturation * 0.38
+	local secondaryScore = secondaryValue * 0.62 + secondarySaturation * 0.38
+	return if secondaryScore > primaryScore then region.fallbackSecondary else region.fallbackPrimary
+end
+
 local function fillMaskColor(target: buffer, size: Vector2, mask: buffer, color: Color3)
 	local width = math.floor(size.X)
 	local height = math.floor(size.Y)
@@ -105,6 +113,81 @@ local function fillMaskColor(target: buffer, size: Vector2, mask: buffer, color:
 			end
 		end
 	end
+end
+
+local function fillMaskColorRange(
+	target: buffer,
+	size: Vector2,
+	mask: buffer,
+	color: Color3,
+	minY: number,
+	maxY: number
+)
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local red, green, blue = colorBytes(color)
+	local firstY = math.clamp(math.floor(minY * size.Y / 256 + 0.5), 0, height - 1)
+	local lastY = math.clamp(math.floor(maxY * size.Y / 256 + 0.5), firstY, height - 1)
+	for y = firstY, lastY do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) > 0 then
+				Raster.SourceOverPixel(target, width, height, x, y, {
+					r = red, g = green, b = blue, a = 255,
+				})
+			end
+		end
+	end
+end
+
+local function sampleVibrantMaskColor(
+	pixels: buffer,
+	size: Vector2,
+	mask: buffer,
+	minY: number,
+	maxY: number,
+	fallback: Color3
+): Color3
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local firstY = math.clamp(math.floor(minY * size.Y / 256 + 0.5), 0, height - 1)
+	local lastY = math.clamp(math.floor(maxY * size.Y / 256 + 0.5), firstY, height - 1)
+	local histogram: { [number]: { r: number, g: number, b: number, count: number } } = {}
+	for y = firstY, lastY do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) == 0
+				or buffer.readu8(pixels, pixelOffset + 3) == 0 then
+				continue
+			end
+			local red = buffer.readu8(pixels, pixelOffset)
+			local green = buffer.readu8(pixels, pixelOffset + 1)
+			local blue = buffer.readu8(pixels, pixelOffset + 2)
+			local value = math.max(red, green, blue)
+			local chroma = value - math.min(red, green, blue)
+			if value < 82 and chroma < 42 then continue end
+			local key = math.floor(red / 32) * 64 + math.floor(green / 32) * 8 + math.floor(blue / 32)
+			local bucket = histogram[key]
+			if bucket then
+				bucket.r += red
+				bucket.g += green
+				bucket.b += blue
+				bucket.count += 1
+			else
+				histogram[key] = { r = red, g = green, b = blue, count = 1 }
+			end
+		end
+	end
+	local best: { r: number, g: number, b: number, count: number }? = nil
+	for _, bucket in histogram do
+		if not best or bucket.count > best.count then best = bucket end
+	end
+	if not best then return fallback end
+	return Color3.fromRGB(
+		math.round(best.r / best.count),
+		math.round(best.g / best.count),
+		math.round(best.b / best.count)
+	)
 end
 
 local function cloneBuffer(source: buffer): buffer
@@ -167,7 +250,27 @@ local function projectAccents(
 	local sourceHeight = math.max(1, region.bounds.maxY - region.bounds.minY)
 	local targetWidth = math.max(1, maskBounds.maxX - maskBounds.minX)
 	local targetHeight = math.max(1, maskBounds.maxY - maskBounds.minY)
+	local acceptedComponents = 0
 	for _, component in components do
+		local sumY = 0
+		local sumValue = 0
+		local sumChroma = 0
+		for _, pixel in component.pixels do
+			sumY += pixel.y
+			sumValue += math.max(pixel.r, pixel.g, pixel.b)
+			sumChroma += math.max(pixel.r, pixel.g, pixel.b) - math.min(pixel.r, pixel.g, pixel.b)
+		end
+		local sampleCount = math.max(1, #component.pixels)
+		local localCenterY = (sumY / sampleCount - region.bounds.minY)
+			/ math.max(1, region.bounds.maxY - region.bounds.minY)
+		local darkShoulderContamination = (region.name == "leftSleeve" or region.name == "rightSleeve")
+			and localCenterY < 0.28
+			and sumValue / sampleCount < 76
+			and sumChroma / sampleCount < 34
+		if darkShoulderContamination then
+			continue
+		end
+		acceptedComponents += 1
 		for _, pixel in component.pixels do
 			local localX = (pixel.x - region.bounds.minX) / sourceWidth
 			local localY = (pixel.y - region.bounds.minY) / sourceHeight
@@ -186,7 +289,7 @@ local function projectAccents(
 			end
 		end
 	end
-	return #components
+	return acceptedComponents
 end
 
 local function unionMasks(masks: { [string]: buffer }, size: Vector2): buffer
@@ -280,6 +383,31 @@ function ProceduralChibiBody.Paint(
 		analysis.rightSleeve,
 		analysis.rightSleeve.excludeSkin
 	)
+	local leftShoulderColor = sampleVibrantMaskColor(
+		projected, size, masks.leftArm, 133, 154, shoulderColor(analysis.leftSleeve)
+	)
+	local rightShoulderColor = sampleVibrantMaskColor(
+		projected, size, masks.rightArm, 133, 154, shoulderColor(analysis.rightSleeve)
+	)
+	-- HeadShot hair and the torso edge can contaminate the first sampled sleeve
+	-- rows. Stabilize only the small shoulder cap; the rest of each arm keeps
+	-- its projected stripes and recovered accents.
+	fillMaskColorRange(
+		projected,
+		size,
+		masks.leftArm,
+		leftShoulderColor,
+		107,
+		132
+	)
+	fillMaskColorRange(
+		projected,
+		size,
+		masks.rightArm,
+		rightShoulderColor,
+		107,
+		132
+	)
 	if analysis.midriffUsesSkin then
 		fillMaskColor(projected, size, masks.abdomen, bodyColors.torso)
 		metrics.midriff = {
@@ -352,6 +480,22 @@ function ProceduralChibiBody.Paint(
 		projectAccents(sourcePixels, sourceSize, accented, size, masks.rightArm, analysis.rightSleeve)
 	metrics.lowerGarment.accentComponents =
 		projectAccents(sourcePixels, sourceSize, accented, size, masks.skirt, analysis.lowerGarment)
+	fillMaskColorRange(
+		accented,
+		size,
+		masks.leftArm,
+		leftShoulderColor,
+		107,
+		132
+	)
+	fillMaskColorRange(
+		accented,
+		size,
+		masks.rightArm,
+		rightShoulderColor,
+		107,
+		132
+	)
 
 	local finished = cloneBuffer(accented)
 	local bodyMask = unionMasks(masks, size)

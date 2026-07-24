@@ -3,6 +3,8 @@
 local Body = require(script.Parent:WaitForChild("ProceduralChibiBody"))
 local Face = require(script.Parent:WaitForChild("ProceduralChibiFace"))
 local Finalizer = require(script.Parent:WaitForChild("ProceduralImageFinalizer"))
+local Head = require(script.Parent:WaitForChild("ProceduralChibiHead"))
+local HeadAnalyzer = require(script.Parent:WaitForChild("ProceduralChibiHeadAnalyzer"))
 local OutfitAnalyzer = require(script.Parent:WaitForChild("ProceduralChibiOutfitAnalyzer"))
 local Raster = require(script.Parent:WaitForChild("ProceduralRaster"))
 
@@ -145,6 +147,39 @@ local function syntheticOutfit(): (buffer, Vector2, Raster.Bounds, OutfitAnalyze
 	}
 end
 
+local function syntheticHead(
+	primary: Color3,
+	secondary: Color3
+): (buffer, Vector2, Raster.Bounds, Color3)
+	local size = Vector2.new(96, 96)
+	local width = 96
+	local pixels = buffer.create(width * 96 * 4)
+	local skin = Color3.fromRGB(236, 184, 158)
+	local shadow = primary:Lerp(Color3.fromRGB(20, 18, 30), 0.38)
+	local bounds: Raster.Bounds = { minX = 8, minY = 4, maxX = 87, maxY = 91 }
+	-- Hair surrounds a protected central face. The secondary is deliberately
+	-- concentrated in the lower sides/tips.
+	fillRect(pixels, width, 18, 12, 77, 38, primary)
+	fillRect(pixels, width, 12, 25, 29, 82, primary)
+	fillRect(pixels, width, 66, 25, 83, 82, primary)
+	fillRect(pixels, width, 20, 14, 75, 19, shadow)
+	fillRect(pixels, width, 13, 68, 31, 87, secondary)
+	fillRect(pixels, width, 64, 68, 82, 87, secondary)
+	fillRect(pixels, width, 30, 34, 65, 79, skin)
+	-- Original thumbnail eyes are residual dark components and must never be
+	-- restored as accessories over the procedural face.
+	fillRect(pixels, width, 37, 51, 43, 60, Color3.fromRGB(18, 18, 26))
+	fillRect(pixels, width, 52, 51, 58, 60, Color3.fromRGB(18, 18, 26))
+	-- Two ears, two side headphones and two compact hair ornaments.
+	fillRect(pixels, width, 13, 4, 26, 17, Color3.fromRGB(245, 126, 42))
+	fillRect(pixels, width, 69, 4, 82, 17, Color3.fromRGB(245, 126, 42))
+	fillRect(pixels, width, 7, 38, 15, 61, Color3.fromRGB(42, 221, 230))
+	fillRect(pixels, width, 80, 38, 88, 61, Color3.fromRGB(42, 221, 230))
+	fillRect(pixels, width, 24, 28, 29, 34, Color3.fromRGB(255, 197, 55))
+	fillRect(pixels, width, 67, 30, 75, 38, Color3.fromRGB(237, 82, 177))
+	return pixels, size, bounds, skin
+end
+
 function ProceduralChibiSelfTest.Run(): { [string]: any }
 	local paletteSize = Vector2.new(16, 4)
 	local paletteInput = buffer.create(16 * 4 * 4)
@@ -243,6 +278,53 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 		Color3.fromRGB(235, 190, 170)
 	)
 	assert(countOpaque(faceLayer, bodySize) > 0, "FaceLayer did not create alpha")
+
+	for _, palette in {
+		{ Color3.fromRGB(104, 202, 76), Color3.fromRGB(139, 70, 219) },
+		{ Color3.fromRGB(72, 168, 219), Color3.fromRGB(238, 105, 151) },
+	} do
+		local headPixels, headSize, headBounds, headSkin =
+			syntheticHead(palette[1] :: Color3, palette[2] :: Color3)
+		local headAnalysis = HeadAnalyzer.Analyze(headPixels, headSize, headBounds, headSkin, {
+			AlphaThreshold = 48,
+			SecondaryMinimumCoverage = 0.04,
+			AccessoryMinimumConfidence = 0.35,
+			MaxAccessoryComponents = 10,
+		})
+		assert(headAnalysis.hair.primaryCoverage > 0.12, "Spatial primary hair coverage is too low")
+		assert(headAnalysis.hair.secondaryReliable, "Secondary tip color was not detected")
+		assert(headAnalysis.hair.secondaryCoverage >= 0.04, "Secondary coverage did not reach its limit")
+		assert(
+			headAnalysis.metrics.accepted >= 2,
+			string.format(
+				"Synthetic head accessories were not retained accepted=%d candidates=%d rejectedFace=%d",
+				headAnalysis.metrics.accepted,
+				headAnalysis.metrics.candidates,
+				headAnalysis.metrics.rejectedFace
+			)
+		)
+		assert(
+			buffer.readu8(headAnalysis.candidateMask, offset(96, 40, 55) + 3) == 0,
+			"Original dark eyes survived as accessory candidates"
+		)
+		local paintedHead = Head.Paint(
+			bodySize,
+			{ minX = 12, minY = 3, maxX = 116, maxY = 108 },
+			headPixels,
+			headSize,
+			headBounds,
+			headAnalysis,
+			headSkin,
+			Color3.fromRGB(116, 88, 168),
+			Color3.fromRGB(24, 28, 40)
+		)
+		assert(countOpaque(paintedHead.backHair, bodySize) > 500, "BackHairLayer is empty")
+		assert(countOpaque(paintedHead.face, bodySize) > 500, "Procedural face mask is empty")
+		assert(countOpaque(paintedHead.frontHair, bodySize) > 100, "Procedural fringe is empty")
+		assert(countOpaque(paintedHead.accessories, bodySize) > 0, "Accessory projection is empty")
+		assert(countOpaque(paintedHead.composite, bodySize) > countOpaque(paintedHead.face, bodySize), "Head layers did not compose")
+		assert(not paintedHead.metrics.fallbackUsed, "Synthetic head unexpectedly used legacy fallback")
+	end
 
 	local destination = buffer.create(4)
 	buffer.writeu8(destination, 2, 255)

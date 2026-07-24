@@ -30,6 +30,22 @@ export type ProjectOptions = {
 	RejectColor: ((number, number, number) -> boolean)?,
 }
 
+export type ComponentPixel = {
+	x: number,
+	y: number,
+	r: number,
+	g: number,
+	b: number,
+	a: number,
+}
+
+export type ConnectedComponent = {
+	bounds: Bounds,
+	area: number,
+	centroid: Vector2,
+	pixels: { ComponentPixel },
+}
+
 local ProceduralRaster = {}
 
 local function offset(width: number, x: number, y: number): number
@@ -548,6 +564,198 @@ function ProceduralRaster.CompositeBufferSourceOver(
 			})
 		end
 	end
+end
+
+function ProceduralRaster.CardinalDilate(mask: buffer, size: Vector2, radius: number?): buffer
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local result = buffer.create(width * height * 4)
+	local steps = math.max(1, math.floor(radius or 1))
+	local current = mask
+	for _ = 1, steps do
+		local expanded = buffer.create(width * height * 4)
+		for y = 0, height - 1 do
+			for x = 0, width - 1 do
+				local occupied = false
+				for _, delta in {
+					Vector2.zero,
+					Vector2.new(-1, 0),
+					Vector2.new(1, 0),
+					Vector2.new(0, -1),
+					Vector2.new(0, 1),
+				} do
+					local sampleX = x + delta.X
+					local sampleY = y + delta.Y
+					if sampleX >= 0 and sampleY >= 0 and sampleX < width and sampleY < height
+						and buffer.readu8(current, offset(width, sampleX, sampleY) + 3) > 0 then
+						occupied = true
+						break
+					end
+				end
+				if occupied then
+					buffer.writeu8(expanded, offset(width, x, y) + 3, 255)
+				end
+			end
+		end
+		current = expanded
+	end
+	buffer.copy(result, 0, current, 0, buffer.len(current))
+	return result
+end
+
+function ProceduralRaster.CardinalErode(mask: buffer, size: Vector2, radius: number?): buffer
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local steps = math.max(1, math.floor(radius or 1))
+	local current = mask
+	for _ = 1, steps do
+		local eroded = buffer.create(width * height * 4)
+		for y = 0, height - 1 do
+			for x = 0, width - 1 do
+				local occupied = true
+				for _, delta in {
+					Vector2.zero,
+					Vector2.new(-1, 0),
+					Vector2.new(1, 0),
+					Vector2.new(0, -1),
+					Vector2.new(0, 1),
+				} do
+					local sampleX = x + delta.X
+					local sampleY = y + delta.Y
+					if sampleX < 0 or sampleY < 0 or sampleX >= width or sampleY >= height
+						or buffer.readu8(current, offset(width, sampleX, sampleY) + 3) == 0 then
+						occupied = false
+						break
+					end
+				end
+				if occupied then
+					buffer.writeu8(eroded, offset(width, x, y) + 3, 255)
+				end
+			end
+		end
+		current = eroded
+	end
+	return current
+end
+
+function ProceduralRaster.ClipToMask(pixels: buffer, size: Vector2, mask: buffer): buffer
+	local result = buffer.create(buffer.len(pixels))
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) > 0 then
+				buffer.copy(result, pixelOffset, pixels, pixelOffset, 4)
+			end
+		end
+	end
+	return result
+end
+
+function ProceduralRaster.ConnectedComponents(
+	mask: buffer,
+	size: Vector2,
+	sourcePixels: buffer?,
+	minAlpha: number?
+): { ConnectedComponent }
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local threshold = math.clamp(math.floor(minAlpha or 1), 1, 255)
+	local visited: { [number]: boolean } = {}
+	local components: { ConnectedComponent } = {}
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local key = y * width + x
+			if visited[key] or buffer.readu8(mask, offset(width, x, y) + 3) < threshold then
+				continue
+			end
+			local queue = { key }
+			local queueIndex = 1
+			local pixels: { ComponentPixel } = {}
+			local bounds: Bounds = { minX = x, minY = y, maxX = x, maxY = y }
+			local sumX = 0
+			local sumY = 0
+			visited[key] = true
+			while queueIndex <= #queue do
+				local current = queue[queueIndex]
+				queueIndex += 1
+				local currentX = current % width
+				local currentY = math.floor(current / width)
+				local pixelOffset = offset(width, currentX, currentY)
+				local source = sourcePixels or mask
+				table.insert(pixels, {
+					x = currentX,
+					y = currentY,
+					r = buffer.readu8(source, pixelOffset),
+					g = buffer.readu8(source, pixelOffset + 1),
+					b = buffer.readu8(source, pixelOffset + 2),
+					a = buffer.readu8(source, pixelOffset + 3),
+				})
+				sumX += currentX
+				sumY += currentY
+				bounds.minX = math.min(bounds.minX, currentX)
+				bounds.minY = math.min(bounds.minY, currentY)
+				bounds.maxX = math.max(bounds.maxX, currentX)
+				bounds.maxY = math.max(bounds.maxY, currentY)
+				for _, delta in {
+					Vector2.new(-1, 0),
+					Vector2.new(1, 0),
+					Vector2.new(0, -1),
+					Vector2.new(0, 1),
+				} do
+					local neighborX = currentX + delta.X
+					local neighborY = currentY + delta.Y
+					local neighborKey = neighborY * width + neighborX
+					if neighborX >= 0 and neighborY >= 0 and neighborX < width and neighborY < height
+						and not visited[neighborKey]
+						and buffer.readu8(mask, offset(width, neighborX, neighborY) + 3) >= threshold then
+						visited[neighborKey] = true
+						table.insert(queue, neighborKey)
+					end
+				end
+			end
+			local area = #pixels
+			table.insert(components, {
+				bounds = bounds,
+				area = area,
+				centroid = Vector2.new(sumX / area, sumY / area),
+				pixels = pixels,
+			})
+		end
+	end
+	table.sort(components, function(left, right)
+		return left.area > right.area
+	end)
+	return components
+end
+
+function ProceduralRaster.ProjectComponent(
+	component: ConnectedComponent,
+	target: buffer,
+	targetSize: Vector2,
+	targetBounds: Bounds,
+	maxScale: number?
+): number
+	local targetWidth = math.floor(targetSize.X)
+	local targetHeight = math.floor(targetSize.Y)
+	local sourceWidth = math.max(1, component.bounds.maxX - component.bounds.minX + 1)
+	local sourceHeight = math.max(1, component.bounds.maxY - component.bounds.minY + 1)
+	local destinationWidth = math.max(1, targetBounds.maxX - targetBounds.minX + 1)
+	local destinationHeight = math.max(1, targetBounds.maxY - targetBounds.minY + 1)
+	local scale = math.min(destinationWidth / sourceWidth, destinationHeight / sourceHeight, maxScale or math.huge)
+	local drawn = 0
+	for _, pixel in component.pixels do
+		local localX = (pixel.x - component.bounds.minX + 0.5) * scale
+		local localY = (pixel.y - component.bounds.minY + 0.5) * scale
+		local x = math.floor(targetBounds.minX + localX)
+		local y = math.floor(targetBounds.minY + localY)
+		if x >= 0 and y >= 0 and x < targetWidth and y < targetHeight then
+			ProceduralRaster.SourceOverPixel(target, targetWidth, targetHeight, x, y, pixel)
+			drawn += 1
+		end
+	end
+	return drawn
 end
 
 return table.freeze(ProceduralRaster)

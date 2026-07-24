@@ -441,6 +441,13 @@ local function regenerateThumbnail()
 					EyeColor = Config.ProceduralChibiEyeColor,
 					HeadRatio = Config.ThumbnailHeadRatio,
 					HeadHeightRatio = Config.ProceduralChibiHeadHeightRatio,
+					HeadWidthRatio = Config.ProceduralChibiHeadWidthRatio,
+					HairSecondaryMinimumCoverage =
+						Config.ProceduralChibiHairSecondaryMinimumCoverage,
+					AccessoryMinimumConfidence =
+						Config.ProceduralChibiAccessoryMinimumConfidence,
+					MaxAccessoryComponents = Config.ProceduralChibiMaxAccessoryComponents,
+					HeadFallbackEnabled = Config.ProceduralChibiHeadFallbackEnabled,
 					PaletteSize = Config.ProceduralChibiPaletteSize,
 					AlphaThreshold = Config.ProceduralChibiAlphaThreshold,
 					OutlineColor = Config.OutlineColor,
@@ -488,6 +495,17 @@ local function regenerateThumbnail()
 				if outlineEnabled then Config.ThumbnailOutlineRadius else 0
 			))
 			if requestedMode == "ProceduralChibi" and renderMetrics then
+				print(string.format(
+					"[PixelAvatar] head procedural=%s primaryCoverage=%.3f secondaryCoverage=%.3f candidates=%d accepted=%d rejectedFace=%d fallbackPixels=%d headFallback=%s",
+					tostring(renderMetrics.head.proceduralUsed),
+					renderMetrics.head.primaryCoverage,
+					renderMetrics.head.secondaryCoverage,
+					renderMetrics.head.accessoryCandidates,
+					renderMetrics.head.accessoriesAccepted,
+					renderMetrics.head.accessoriesRejectedFace,
+					renderMetrics.head.fallbackPixels,
+					tostring(renderMetrics.head.fallbackUsed)
+				))
 				for regionName, regionMetrics in renderMetrics.regions do
 					local fallbackRatio = regionMetrics.fallbackPixels
 						/ math.max(1, regionMetrics.projectedPixels)

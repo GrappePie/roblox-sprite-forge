@@ -44,10 +44,15 @@ Roblox client. It uses the pixelized Roblox avatar as identity input, then:
   procedural masks whose alpha defines the final chibi anatomy;
 - recovers compact high-contrast outfit accents after the area-sampled base
   transfer, so symbols, stripes and garment panels can survive;
-- preserves the copied head temporarily for hair and accessory fidelity;
-- paints a deterministic skin-colored face region;
-- draws anime eyes, highlights, lashes, blush and a small mouth;
-- samples the avatar's hair color and redraws a graphic fringe over the face;
+- analyzes crown, side and tip hair regions instead of choosing the largest
+  global color bucket;
+- builds a canonical rounded-bob head from procedural back-hair, face, side,
+  fringe, bang and tip masks;
+- draws layered anime eyes, highlights, lashes, blush and a curved mouth;
+- extracts compact accessory components outside the protected source-face
+  region and projects them to canonical head anchors;
+- keeps the old copied head only in `LegacyCopiedHead` and as a low-confidence
+  fallback;
 - writes the finished composition to a new `EditableImage`.
 
 This is not an external AI call and does not contact the local Sprite Forge
@@ -89,6 +94,8 @@ ReplicatedStorage
     ├── ProceduralChibiBody
     ├── HairColorAnalyzer
     ├── ProceduralChibiFace
+    ├── ProceduralChibiHeadAnalyzer
+    ├── ProceduralChibiHead
     ├── ProceduralChibiSelfTest
     └── ProceduralChibiRenderer
 
@@ -159,6 +166,11 @@ ProceduralChibiEyeColor = Color3.fromRGB(116, 88, 168)
 ProceduralChibiPaletteSize = 48
 ProceduralChibiAlphaThreshold = 48
 ProceduralChibiHeadHeightRatio = 0.41
+ProceduralChibiHeadWidthRatio = 0.82
+ProceduralChibiHairSecondaryMinimumCoverage = 0.04
+ProceduralChibiAccessoryMinimumConfidence = 0.35
+ProceduralChibiMaxAccessoryComponents = 10
+ProceduralChibiHeadFallbackEnabled = true
 ProceduralChibiDebugStage = "Final"
 ProceduralChibiRunSelfTest = true
 ```
@@ -171,11 +183,14 @@ palette size. Head and body palette sizes can be tuned independently.
 The preview uses the largest integer display scale that fits, preventing uneven
 pixel widths at 80×80 and 96×96. The 128×256 procedural image is shown at
 exactly 2× (256×512), with pixelated sampling. In Studio, the stage button
-cycles through `SourceBody`, `SourceRegions`, `BodyMasks`, `BodyProjected`,
-`BodyAccents`, `BeforeFace`, `BeforeFinalize` and `Final`.
+cycles through the body diagnostics plus `HeadSource`, `HairClusters`,
+`HairMasks`, `AccessoryCandidates`, `HeadWithoutAccessories`,
+`HeadComposite`, `LegacyCopiedHead`, `BeforeFace`, `BeforeFinalize` and
+`Final`.
 `ProceduralChibiRunSelfTest` runs only in Studio and validates a synthetic
-black/yellow/rainbow/skin/green-purple/boot outfit through the actual regional
-pipeline. `ThumbnailOutlineRadius` controls the actual
+black/yellow/rainbow/skin/green-purple/boot outfit and two synthetic head
+palettes through the actual regional pipelines. It also verifies that copied
+thumbnail eyes cannot return as accessories. `ThumbnailOutlineRadius` controls the actual
 raster outline. `OutlineThickness`
 is retained as a design setting, but Roblox `Highlight` does
 not expose a thickness property. The supported controls are outline color and
