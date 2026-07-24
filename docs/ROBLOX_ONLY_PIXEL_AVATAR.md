@@ -50,7 +50,15 @@ Roblox client. It uses the pixelized Roblox avatar as identity input, then:
   fringe, bang and tip masks;
 - draws layered anime eyes, highlights, lashes, blush and a curved mouth;
 - extracts compact accessory components outside the protected source-face
-  region and projects them to canonical head anchors;
+  region with eight-neighbour connectivity, merges compatible 1–3 px
+  fragments, pairs symmetric pieces and projects them inversely to seven
+  canonical head anchors;
+- composites accessories in independent back, side and front depth buffers;
+- retains a spatial hair-core and four-label color map so secondary hair
+  distribution remains coherent instead of becoming a checker pattern;
+- builds the hair dome and a continuous seven-tip fringe from reusable masks;
+- isolates the central connected skirt source from side hands/skin and repairs
+  only transparent shoulder holes without overwriting valid sleeve stripes;
 - keeps the old copied head only in `LegacyCopiedHead` and as a low-confidence
   fallback;
 - writes the finished composition to a new `EditableImage`.
@@ -167,6 +175,7 @@ ProceduralChibiPaletteSize = 48
 ProceduralChibiAlphaThreshold = 48
 ProceduralChibiHeadHeightRatio = 0.41
 ProceduralChibiHeadWidthRatio = 0.82
+ProceduralChibiHeadWidthAuto = true
 ProceduralChibiHairSecondaryMinimumCoverage = 0.04
 ProceduralChibiAccessoryMinimumConfidence = 0.35
 ProceduralChibiMaxAccessoryComponents = 10
@@ -184,9 +193,12 @@ The preview uses the largest integer display scale that fits, preventing uneven
 pixel widths at 80×80 and 96×96. The 128×256 procedural image is shown at
 exactly 2× (256×512), with pixelated sampling. In Studio, the stage button
 cycles through the body diagnostics plus `HeadSource`, `HairClusters`,
-`HairMasks`, `AccessoryCandidates`, `HeadWithoutAccessories`,
-`HeadComposite`, `LegacyCopiedHead`, `BeforeFace`, `BeforeFinalize` and
-`Final`.
+`HairCore`, `HairLabelMap`, `HairMasks`, `AccessoryRawCandidates`,
+`AccessoryMergedGroups`, `AccessoryAnchors`, the three accessory depth layers,
+`FringeMask`, `SkirtSourceMask`, `ShoulderRepair`, `HeadWithoutAccessories`,
+`HeadComposite`, `LegacyCopiedHead`, `BeforeFace`, `FinalBeforeQuantize` and
+`Final`. With `ProceduralChibiHeadWidthAuto`, hair-core aspect selects a
+0.74–0.82 head-width ratio; disabling it restores the explicit ratio override.
 `ProceduralChibiRunSelfTest` runs only in Studio and validates a synthetic
 black/yellow/rainbow/skin/green-purple/boot outfit and two synthetic head
 palettes through the actual regional pipelines. It also verifies that copied

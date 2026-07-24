@@ -46,6 +46,20 @@ export type ConnectedComponent = {
 	pixels: { ComponentPixel },
 }
 
+export type ComponentProjectionMetrics = {
+	sourcePixels: number,
+	destinationPixels: number,
+	occupiedPixels: number,
+	fillRatio: number,
+	repairedPixels: number,
+	clippedPixels: number,
+}
+
+export type ComponentProjectionOptions = {
+	CloseRadius: number?,
+	MaxScale: number?,
+}
+
 local ProceduralRaster = {}
 
 local function offset(width: number, x: number, y: number): number
@@ -128,6 +142,87 @@ function ProceduralRaster.FillPolygon(mask: buffer, size: Vector2, points: { Vec
 			end
 		end
 	end
+end
+
+function ProceduralRaster.FillEllipse(
+	mask: buffer,
+	size: Vector2,
+	center: Vector2,
+	radius: Vector2
+)
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local radiusX = math.max(0.5, radius.X)
+	local radiusY = math.max(0.5, radius.Y)
+	for y = math.max(0, math.floor(center.Y - radiusY)), math.min(height - 1, math.ceil(center.Y + radiusY)) do
+		for x = math.max(0, math.floor(center.X - radiusX)), math.min(width - 1, math.ceil(center.X + radiusX)) do
+			local dx = (x + 0.5 - center.X) / radiusX
+			local dy = (y + 0.5 - center.Y) / radiusY
+			if dx * dx + dy * dy <= 1 then
+				setMaskAlpha(mask, width, height, x, y)
+			end
+		end
+	end
+end
+
+function ProceduralRaster.FillRoundedPolygon(
+	mask: buffer,
+	size: Vector2,
+	points: { Vector2 },
+	radius: number?
+)
+	ProceduralRaster.FillPolygon(mask, size, points)
+	local rounding = math.max(0, math.floor(radius or 1))
+	if rounding > 0 then
+		local closed = ProceduralRaster.CardinalDilate(mask, size, rounding)
+		closed = ProceduralRaster.CardinalErode(closed, size, rounding)
+		buffer.copy(mask, 0, closed, 0, buffer.len(mask))
+	end
+end
+
+function ProceduralRaster.UnionMasks(left: buffer, right: buffer, size: Vector2): buffer
+	local result = buffer.create(buffer.len(left))
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(left, pixelOffset + 3) > 0 or buffer.readu8(right, pixelOffset + 3) > 0 then
+				buffer.writeu8(result, pixelOffset + 3, 255)
+			end
+		end
+	end
+	return result
+end
+
+function ProceduralRaster.IntersectMasks(left: buffer, right: buffer, size: Vector2): buffer
+	local result = buffer.create(buffer.len(left))
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(left, pixelOffset + 3) > 0 and buffer.readu8(right, pixelOffset + 3) > 0 then
+				buffer.writeu8(result, pixelOffset + 3, 255)
+			end
+		end
+	end
+	return result
+end
+
+function ProceduralRaster.SubtractMask(base: buffer, subtract: buffer, size: Vector2): buffer
+	local result = buffer.create(buffer.len(base))
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(base, pixelOffset + 3) > 0 and buffer.readu8(subtract, pixelOffset + 3) == 0 then
+				buffer.writeu8(result, pixelOffset + 3, 255)
+			end
+		end
+	end
+	return result
 end
 
 function ProceduralRaster.FillCapsule(
@@ -657,7 +752,8 @@ function ProceduralRaster.ConnectedComponents(
 	mask: buffer,
 	size: Vector2,
 	sourcePixels: buffer?,
-	minAlpha: number?
+	minAlpha: number?,
+	connectivity: number?
 ): { ConnectedComponent }
 	local width = math.floor(size.X)
 	local height = math.floor(size.Y)
@@ -698,12 +794,19 @@ function ProceduralRaster.ConnectedComponents(
 				bounds.minY = math.min(bounds.minY, currentY)
 				bounds.maxX = math.max(bounds.maxX, currentX)
 				bounds.maxY = math.max(bounds.maxY, currentY)
-				for _, delta in {
+				local deltas = {
 					Vector2.new(-1, 0),
 					Vector2.new(1, 0),
 					Vector2.new(0, -1),
 					Vector2.new(0, 1),
-				} do
+				}
+				if connectivity == 8 then
+					table.insert(deltas, Vector2.new(-1, -1))
+					table.insert(deltas, Vector2.new(1, -1))
+					table.insert(deltas, Vector2.new(-1, 1))
+					table.insert(deltas, Vector2.new(1, 1))
+				end
+				for _, delta in deltas do
 					local neighborX = currentX + delta.X
 					local neighborY = currentY + delta.Y
 					local neighborKey = neighborY * width + neighborX
@@ -728,6 +831,134 @@ function ProceduralRaster.ConnectedComponents(
 		return left.area > right.area
 	end)
 	return components
+end
+
+function ProceduralRaster.ProjectComponentResampled(
+	component: ConnectedComponent,
+	target: buffer,
+	targetSize: Vector2,
+	targetBounds: Bounds,
+	options: ComponentProjectionOptions?
+): ComponentProjectionMetrics
+	local settings = options or {}
+	local targetWidth = math.floor(targetSize.X)
+	local targetHeight = math.floor(targetSize.Y)
+	local sourceWidth = math.max(1, component.bounds.maxX - component.bounds.minX + 1)
+	local sourceHeight = math.max(1, component.bounds.maxY - component.bounds.minY + 1)
+	local boxWidth = math.max(1, targetBounds.maxX - targetBounds.minX + 1)
+	local boxHeight = math.max(1, targetBounds.maxY - targetBounds.minY + 1)
+	local scale = math.min(boxWidth / sourceWidth, boxHeight / sourceHeight, settings.MaxScale or math.huge)
+	local destinationWidth = math.max(1, math.floor(sourceWidth * scale + 0.5))
+	local destinationHeight = math.max(1, math.floor(sourceHeight * scale + 0.5))
+	local destinationMinX = targetBounds.minX + math.floor((boxWidth - destinationWidth) / 2)
+	local destinationMinY = targetBounds.minY + math.floor((boxHeight - destinationHeight) / 2)
+	local lookup: { [number]: ComponentPixel } = {}
+	for _, pixel in component.pixels do
+		lookup[(pixel.y - component.bounds.minY) * sourceWidth + pixel.x - component.bounds.minX] = pixel
+	end
+	local projectedMask = buffer.create(targetWidth * targetHeight * 4)
+	local occupiedPixels = 0
+	local clippedPixels = 0
+	for destinationY = 0, destinationHeight - 1 do
+		for destinationX = 0, destinationWidth - 1 do
+			local x = destinationMinX + destinationX
+			local y = destinationMinY + destinationY
+			if x < 0 or y < 0 or x >= targetWidth or y >= targetHeight then
+				clippedPixels += 1
+				continue
+			end
+			-- Inverse mapping guarantees every destination pixel is sampled.
+			-- Nearest-neighbour is crisp while enlarging; a small premultiplied
+			-- box is used while reducing to avoid dropping thin ornament lines.
+			local sourceMinX = destinationX / scale
+			local sourceMaxX = (destinationX + 1) / scale
+			local sourceMinY = destinationY / scale
+			local sourceMaxY = (destinationY + 1) / scale
+			local firstX = math.floor(sourceMinX)
+			local lastX = math.min(sourceWidth - 1, math.max(firstX, math.ceil(sourceMaxX) - 1))
+			local firstY = math.floor(sourceMinY)
+			local lastY = math.min(sourceHeight - 1, math.max(firstY, math.ceil(sourceMaxY) - 1))
+			local red = 0
+			local green = 0
+			local blue = 0
+			local alpha = 0
+			local samples = 0
+			for sampleY = firstY, lastY do
+				for sampleX = firstX, lastX do
+					local pixel = lookup[sampleY * sourceWidth + sampleX]
+					if pixel then
+						local normalizedAlpha = pixel.a / 255
+						red += pixel.r * normalizedAlpha
+						green += pixel.g * normalizedAlpha
+						blue += pixel.b * normalizedAlpha
+						alpha += pixel.a
+					end
+					samples += 1
+				end
+			end
+			if alpha > 0 then
+				local outputAlpha = math.clamp(math.round(alpha / math.max(1, samples)), 1, 255)
+				local alphaWeight = alpha / 255
+				ProceduralRaster.SourceOverPixel(target, targetWidth, targetHeight, x, y, {
+					r = math.round(red / math.max(0.001, alphaWeight)),
+					g = math.round(green / math.max(0.001, alphaWeight)),
+					b = math.round(blue / math.max(0.001, alphaWeight)),
+					a = outputAlpha,
+				})
+				setMaskAlpha(projectedMask, targetWidth, targetHeight, x, y)
+				occupiedPixels += 1
+			end
+		end
+	end
+	local repairedPixels = 0
+	if (settings.CloseRadius or 0) > 0 then
+		local closed = ProceduralRaster.CardinalErode(
+			ProceduralRaster.CardinalDilate(projectedMask, targetSize, settings.CloseRadius),
+			targetSize,
+			settings.CloseRadius
+		)
+		for y = math.max(0, destinationMinY), math.min(targetHeight - 1, destinationMinY + destinationHeight - 1) do
+			for x = math.max(0, destinationMinX), math.min(targetWidth - 1, destinationMinX + destinationWidth - 1) do
+				local pixelOffset = offset(targetWidth, x, y)
+				if buffer.readu8(closed, pixelOffset + 3) > 0 and buffer.readu8(projectedMask, pixelOffset + 3) == 0 then
+					local nearest: ComponentPixel? = nil
+					for _, delta in {
+						Vector2.new(-1, 0), Vector2.new(1, 0),
+						Vector2.new(0, -1), Vector2.new(0, 1),
+					} do
+						local neighborX = x + delta.X
+						local neighborY = y + delta.Y
+						if neighborX >= 0 and neighborY >= 0 and neighborX < targetWidth and neighborY < targetHeight then
+							local neighborOffset = offset(targetWidth, neighborX, neighborY)
+							if buffer.readu8(target, neighborOffset + 3) > 0 then
+								nearest = {
+									x = 0, y = 0,
+									r = buffer.readu8(target, neighborOffset),
+									g = buffer.readu8(target, neighborOffset + 1),
+									b = buffer.readu8(target, neighborOffset + 2),
+									a = buffer.readu8(target, neighborOffset + 3),
+								}
+								break
+							end
+						end
+					end
+					if nearest then
+						ProceduralRaster.SourceOverPixel(target, targetWidth, targetHeight, x, y, nearest)
+						repairedPixels += 1
+					end
+				end
+			end
+		end
+	end
+	local destinationPixels = destinationWidth * destinationHeight
+	return {
+		sourcePixels = component.area,
+		destinationPixels = destinationPixels,
+		occupiedPixels = occupiedPixels + repairedPixels,
+		fillRatio = (occupiedPixels + repairedPixels) / math.max(1, destinationPixels),
+		repairedPixels = repairedPixels,
+		clippedPixels = clippedPixels,
+	}
 end
 
 function ProceduralRaster.ProjectComponent(

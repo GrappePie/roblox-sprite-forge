@@ -12,9 +12,20 @@ export type HeadMetrics = {
 	fallbackUsed: boolean,
 	primaryCoverage: number,
 	secondaryCoverage: number,
+	hairCoreCoverage: number,
+	fringeGapCount: number,
+	strayPixelCount: number,
 	accessoryCandidates: number,
 	accessoriesAccepted: number,
 	accessoriesRejectedFace: number,
+	rawComponents: number,
+	mergedComponents: number,
+	acceptedComponents: number,
+	projectedComponents: number,
+	averageFillRatio: number,
+	repairedPixels: number,
+	clippedPixels: number,
+	byZone: { [string]: number },
 	fallbackPixels: number,
 }
 
@@ -24,9 +35,17 @@ export type PaintResult = {
 	features: buffer,
 	frontHair: buffer,
 	accessories: buffer,
+	backAccessories: buffer,
+	sideAccessories: buffer,
+	frontAccessories: buffer,
 	hairMasks: buffer,
 	hairClusters: buffer,
+	hairCore: buffer,
+	hairLabelMap: buffer,
 	accessoryCandidates: buffer,
+	accessoryRawCandidates: buffer,
+	accessoryMergedGroups: buffer,
+	accessoryAnchors: buffer,
 	withoutAccessories: buffer,
 	composite: buffer,
 	masks: { [string]: buffer },
@@ -37,30 +56,33 @@ export type PaintResult = {
 
 local ProceduralChibiHead = {}
 
+local CANONICAL_ANCHORS: { [string]: Bounds } = {
+	topLeft = { minX = 2, minY = 0, maxX = 45, maxY = 38 },
+	topRight = { minX = 83, minY = 0, maxX = 126, maxY = 38 },
+	sideLeft = { minX = 1, minY = 28, maxX = 34, maxY = 105 },
+	sideRight = { minX = 94, minY = 28, maxX = 127, maxY = 105 },
+	frontLeft = { minX = 20, minY = 18, maxX = 63, maxY = 72 },
+	frontRight = { minX = 65, minY = 18, maxX = 108, maxY = 72 },
+	centerTop = { minX = 43, minY = 0, maxX = 85, maxY = 34 },
+}
+
 local function offset(width: number, x: number, y: number): number
 	return (y * width + x) * 4
 end
 
-local function scaled(size: Vector2, x: number, y: number): Vector2
-	return Vector2.new(
-		math.floor(x * size.X / 128 + 0.5),
-		math.floor(y * size.Y / 256 + 0.5)
-	)
-end
-
-local function polygon(mask: buffer, size: Vector2, coordinates: { number })
-	local points = {}
-	for index = 1, #coordinates, 2 do
-		table.insert(points, scaled(size, coordinates[index], coordinates[index + 1]))
-	end
-	Raster.FillPolygon(mask, size, points)
+local function scaledBounds(size: Vector2, bounds: Bounds): Bounds
+	return {
+		minX = math.floor(bounds.minX * size.X / 128 + 0.5),
+		minY = math.floor(bounds.minY * size.Y / 256 + 0.5),
+		maxX = math.floor(bounds.maxX * size.X / 128 + 0.5),
+		maxY = math.floor(bounds.maxY * size.Y / 256 + 0.5),
+	}
 end
 
 local function alphaMask(layer: buffer, size: Vector2): buffer
 	local mask = buffer.create(buffer.len(layer))
 	local width = math.floor(size.X)
-	local height = math.floor(size.Y)
-	for y = 0, height - 1 do
+	for y = 0, math.floor(size.Y) - 1 do
 		for x = 0, width - 1 do
 			local pixelOffset = offset(width, x, y)
 			if buffer.readu8(layer, pixelOffset + 3) > 0 then
@@ -69,22 +91,6 @@ local function alphaMask(layer: buffer, size: Vector2): buffer
 		end
 	end
 	return mask
-end
-
-local function intersectMasks(left: buffer, right: buffer, size: Vector2): buffer
-	local result = buffer.create(buffer.len(left))
-	local width = math.floor(size.X)
-	local height = math.floor(size.Y)
-	for y = 0, height - 1 do
-		for x = 0, width - 1 do
-			local pixelOffset = offset(width, x, y)
-			if buffer.readu8(left, pixelOffset + 3) > 0
-				and buffer.readu8(right, pixelOffset + 3) > 0 then
-				buffer.writeu8(result, pixelOffset + 3, 255)
-			end
-		end
-	end
-	return result
 end
 
 local function fillMask(target: buffer, size: Vector2, mask: buffer, color: Color3)
@@ -103,13 +109,22 @@ local function fillMask(target: buffer, size: Vector2, mask: buffer, color: Colo
 	end
 end
 
+local function rectangleMask(size: Vector2, bounds: Bounds): buffer
+	local mask = buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
+	Raster.FillPolygon(mask, size, {
+		Vector2.new(bounds.minX, bounds.minY),
+		Vector2.new(bounds.maxX, bounds.minY),
+		Vector2.new(bounds.maxX, bounds.maxY),
+		Vector2.new(bounds.minX, bounds.maxY),
+	})
+	return mask
+end
+
 function ProceduralChibiHead.CreateMasks(
 	size: Vector2,
 	headBounds: Bounds,
 	hair: Face.HairColors
 ): { [string]: buffer }
-	local width = math.floor(size.X)
-	local height = math.floor(size.Y)
 	local backLayer = Face.BackHairLayer(size, headBounds, hair)
 	local faceLayer = Face.FaceLayer(size, headBounds, Color3.new(1, 1, 1))
 	local frontLayer = Face.FrontHairLayer(size, headBounds, hair)
@@ -117,79 +132,150 @@ function ProceduralChibiHead.CreateMasks(
 		backHair = alphaMask(backLayer, size),
 		face = alphaMask(faceLayer, size),
 		frontHair = alphaMask(frontLayer, size),
-		sides = buffer.create(width * height * 4),
 		bangs = alphaMask(frontLayer, size),
-		tips = buffer.create(width * height * 4),
-		accessoryAnchors = buffer.create(width * height * 4),
+		tips = buffer.create(buffer.len(backLayer)),
+		accessoryAnchors = buffer.create(buffer.len(backLayer)),
 	}
-	polygon(masks.sides, size, {
-		18, 42, 35, 34, 38, 94, 31, 108, 18, 99,
+	local tipStart = headBounds.minY + math.floor((headBounds.maxY - headBounds.minY + 1) * 0.72)
+	local tipArea = rectangleMask(size, {
+		minX = headBounds.minX,
+		minY = tipStart,
+		maxX = headBounds.maxX,
+		maxY = headBounds.maxY,
 	})
-	polygon(masks.sides, size, {
-		110, 42, 93, 34, 90, 94, 97, 108, 110, 99,
-	})
-	polygon(masks.tips, size, {
-		18, 84, 40, 82, 37, 108, 29, 101, 23, 110, 17, 99,
-	})
-	polygon(masks.tips, size, {
-		110, 84, 88, 82, 91, 108, 99, 101, 105, 110, 111, 99,
-	})
-	masks.tips = intersectMasks(masks.tips, masks.backHair, size)
-	for _, point in {
-		scaled(size, 22, 18), scaled(size, 106, 18),
-		scaled(size, 17, 58), scaled(size, 111, 58),
-		scaled(size, 43, 37), scaled(size, 85, 37),
-	} do
-		local x = math.floor(point.X)
-		local y = math.floor(point.Y)
-		if x >= 0 and y >= 0 and x < width and y < height then
-			buffer.writeu8(masks.accessoryAnchors, offset(width, x, y) + 3, 255)
-		end
+	masks.tips = Raster.IntersectMasks(masks.backHair, tipArea, size)
+	for _, canonicalBounds in CANONICAL_ANCHORS do
+		masks.accessoryAnchors = Raster.UnionMasks(
+			masks.accessoryAnchors,
+			rectangleMask(size, scaledBounds(size, canonicalBounds)),
+			size
+		)
 	end
 	return masks
 end
 
+local function mapSourceBufferToHead(
+	source: buffer,
+	sourceSize: Vector2,
+	sourceBounds: Bounds,
+	targetSize: Vector2,
+	headBounds: Bounds,
+	targetMask: buffer?
+): buffer
+	local target = buffer.create(math.floor(targetSize.X) * math.floor(targetSize.Y) * 4)
+	local sourceWidth = math.floor(sourceSize.X)
+	local targetWidth = math.floor(targetSize.X)
+	local targetHeight = math.floor(targetSize.Y)
+	local headWidth = math.max(1, headBounds.maxX - headBounds.minX + 1)
+	local headHeight = math.max(1, headBounds.maxY - headBounds.minY + 1)
+	local sourceBoundsWidth = math.max(1, sourceBounds.maxX - sourceBounds.minX + 1)
+	local sourceBoundsHeight = math.max(1, sourceBounds.maxY - sourceBounds.minY + 1)
+	for y = math.max(0, headBounds.minY), math.min(targetHeight - 1, headBounds.maxY) do
+		for x = math.max(0, headBounds.minX), math.min(targetWidth - 1, headBounds.maxX) do
+			local targetOffset = offset(targetWidth, x, y)
+			if targetMask and buffer.readu8(targetMask, targetOffset + 3) == 0 then continue end
+			local sourceX = math.clamp(
+				sourceBounds.minX + math.floor((x - headBounds.minX + 0.5) * sourceBoundsWidth / headWidth),
+				sourceBounds.minX,
+				sourceBounds.maxX
+			)
+			local sourceY = math.clamp(
+				sourceBounds.minY + math.floor((y - headBounds.minY + 0.5) * sourceBoundsHeight / headHeight),
+				sourceBounds.minY,
+				sourceBounds.maxY
+			)
+			local sourceOffset = offset(sourceWidth, sourceX, sourceY)
+			if buffer.readu8(source, sourceOffset + 3) > 0 then
+				buffer.copy(target, targetOffset, source, sourceOffset, 4)
+			end
+		end
+	end
+	return target
+end
+
 local function projectAccessories(
 	analysis: Analysis,
-	sourceBounds: Bounds,
-	target: buffer,
 	targetSize: Vector2,
-	headBounds: Bounds
-): number
-	local sourceWidth = math.max(1, sourceBounds.maxX - sourceBounds.minX + 1)
-	local sourceHeight = math.max(1, sourceBounds.maxY - sourceBounds.minY + 1)
-	local targetWidth = headBounds.maxX - headBounds.minX + 1
-	local targetHeight = headBounds.maxY - headBounds.minY + 1
-	local drawn = 0
+	backTarget: buffer,
+	sideTarget: buffer,
+	frontTarget: buffer
+): (number, number, number, number)
+	local projected = 0
+	local fillTotal = 0
+	local repaired = 0
+	local clipped = 0
 	for _, accessory in analysis.accessories do
-		local normalizedMinX = (accessory.bounds.minX - sourceBounds.minX) / sourceWidth
-		local normalizedMaxX = (accessory.bounds.maxX - sourceBounds.minX + 1) / sourceWidth
-		local normalizedMinY = (accessory.bounds.minY - sourceBounds.minY) / sourceHeight
-		local normalizedMaxY = (accessory.bounds.maxY - sourceBounds.minY + 1) / sourceHeight
-		local projectedBounds: Bounds = {
-			minX = math.floor(headBounds.minX + normalizedMinX * targetWidth),
-			maxX = math.ceil(headBounds.minX + normalizedMaxX * targetWidth),
-			minY = math.floor(headBounds.minY + normalizedMinY * targetHeight),
-			maxY = math.ceil(headBounds.minY + normalizedMaxY * targetHeight),
-		}
-		local projectedWidth = projectedBounds.maxX - projectedBounds.minX + 1
-		local projectedHeight = projectedBounds.maxY - projectedBounds.minY + 1
-		local maximumWidth = math.max(5, math.floor(targetWidth * 0.24))
-		local maximumHeight = math.max(6, math.floor(targetHeight * 0.3))
-		if projectedWidth > maximumWidth or projectedHeight > maximumHeight then
-			local centerX = math.floor((projectedBounds.minX + projectedBounds.maxX) / 2)
-			local centerY = math.floor((projectedBounds.minY + projectedBounds.maxY) / 2)
-			local scale = math.min(maximumWidth / projectedWidth, maximumHeight / projectedHeight)
-			projectedWidth = math.max(2, math.floor(projectedWidth * scale))
-			projectedHeight = math.max(2, math.floor(projectedHeight * scale))
-			projectedBounds.minX = centerX - math.floor(projectedWidth / 2)
-			projectedBounds.maxX = projectedBounds.minX + projectedWidth - 1
-			projectedBounds.minY = centerY - math.floor(projectedHeight / 2)
-			projectedBounds.maxY = projectedBounds.minY + projectedHeight - 1
+		local anchor = scaledBounds(targetSize, CANONICAL_ANCHORS[accessory.anchor])
+		local occupancy = if accessory.kind == "Ear"
+			then 0.62
+			elseif accessory.kind == "Headphone" then 0.56
+			elseif accessory.kind == "Bow" then 0.52
+			elseif accessory.kind == "Clip" then 0.34
+			else 0.42
+		local anchorWidth = anchor.maxX - anchor.minX + 1
+		local anchorHeight = anchor.maxY - anchor.minY + 1
+		local fittedWidth = math.max(3, math.floor(anchorWidth * occupancy))
+		local fittedHeight = math.max(3, math.floor(anchorHeight * occupancy))
+		local centerX = math.floor((anchor.minX + anchor.maxX) / 2)
+		local centerY = math.floor((anchor.minY + anchor.maxY) / 2)
+		local fittedMinX = centerX - math.floor(fittedWidth / 2)
+		local fittedMinY = centerY - math.floor(fittedHeight / 2)
+		if accessory.anchor == "topLeft" or accessory.anchor == "sideLeft" then
+			fittedMinX = anchor.maxX - fittedWidth + 1
+		elseif accessory.anchor == "topRight" or accessory.anchor == "sideRight" then
+			fittedMinX = anchor.minX
 		end
-		drawn += Raster.ProjectComponent(accessory.component, target, targetSize, projectedBounds)
+		if accessory.anchor == "topLeft"
+			or accessory.anchor == "topRight"
+			or accessory.anchor == "centerTop" then
+			fittedMinY = anchor.maxY - fittedHeight + 1
+		end
+		anchor = {
+			minX = fittedMinX,
+			maxX = fittedMinX + fittedWidth - 1,
+			minY = fittedMinY,
+			maxY = fittedMinY + fittedHeight - 1,
+		}
+		local target = if accessory.depth == "Back"
+			then backTarget
+			elseif accessory.depth == "Side" then sideTarget
+			else frontTarget
+		local temporary = buffer.create(buffer.len(target))
+		local metrics = Raster.ProjectComponentResampled(accessory.component, temporary, targetSize, anchor, {
+			CloseRadius = 1,
+		})
+		local shiftX = if accessory.anchor == "topLeft" or accessory.anchor == "sideLeft" or accessory.anchor == "frontLeft"
+			then 8
+			elseif accessory.anchor == "topRight" or accessory.anchor == "sideRight" or accessory.anchor == "frontRight" then -8
+			else 0
+		local shiftY = if accessory.anchor == "topLeft"
+				or accessory.anchor == "topRight"
+				or accessory.anchor == "centerTop" then 5 else 0
+		if shiftX ~= 0 or shiftY ~= 0 then
+			local shifted = buffer.create(buffer.len(temporary))
+			local width = math.floor(targetSize.X)
+			local height = math.floor(targetSize.Y)
+			for y = 0, height - 1 do
+				for x = 0, width - 1 do
+					local sourceX = x - shiftX
+					local sourceY = y - shiftY
+					if sourceX >= 0 and sourceY >= 0 and sourceX < width and sourceY < height then
+						local sourceOffset = offset(width, sourceX, sourceY)
+						if buffer.readu8(temporary, sourceOffset + 3) > 0 then
+							buffer.copy(shifted, offset(width, x, y), temporary, sourceOffset, 4)
+						end
+					end
+				end
+			end
+			temporary = shifted
+		end
+		Raster.CompositeBufferSourceOver(target, temporary, targetSize)
+		if metrics.occupiedPixels > 0 then projected += 1 end
+		fillTotal += metrics.fillRatio
+		repaired += metrics.repairedPixels
+		clipped += metrics.clippedPixels
 	end
-	return drawn
+	return projected, fillTotal / math.max(1, projected), repaired, clipped
 end
 
 local function diagnosticMasks(size: Vector2, masks: { [string]: buffer }): buffer
@@ -197,7 +283,6 @@ local function diagnosticMasks(size: Vector2, masks: { [string]: buffer }): buff
 	for _, entry in {
 		{ masks.backHair, Color3.fromRGB(64, 191, 113) },
 		{ masks.face, Color3.fromRGB(255, 202, 178) },
-		{ masks.sides, Color3.fromRGB(103, 99, 225) },
 		{ masks.bangs, Color3.fromRGB(255, 211, 72) },
 		{ masks.tips, Color3.fromRGB(207, 84, 229) },
 		{ masks.accessoryAnchors, Color3.fromRGB(255, 255, 255) },
@@ -205,6 +290,36 @@ local function diagnosticMasks(size: Vector2, masks: { [string]: buffer }): buff
 		fillMask(result, size, entry[1] :: buffer, entry[2] :: Color3)
 	end
 	return result
+end
+
+local function countFringeGaps(mask: buffer, size: Vector2): number
+	local bounds = Raster.MaskBounds(mask, size)
+	if not bounds then return 1 end
+	local width = math.floor(size.X)
+	local gaps = 0
+	for y = bounds.minY, math.min(bounds.maxY, bounds.minY + math.floor((bounds.maxY - bounds.minY) * 0.48)) do
+		local gapLength = 0
+		local occupiedSeen = false
+		for x = bounds.minX, bounds.maxX do
+			if buffer.readu8(mask, offset(width, x, y) + 3) > 0 then
+				if occupiedSeen and gapLength > 2 then gaps += 1 end
+				occupiedSeen = true
+				gapLength = 0
+			elseif occupiedSeen then
+				gapLength += 1
+			end
+		end
+	end
+	return gaps
+end
+
+local function countStrays(pixels: buffer, size: Vector2): number
+	local mask = alphaMask(pixels, size)
+	local strays = 0
+	for _, component in Raster.ConnectedComponents(mask, size, nil, 1, 8) do
+		if component.area <= 2 then strays += component.area end
+	end
+	return strays
 end
 
 function ProceduralChibiHead.Paint(
@@ -221,57 +336,73 @@ function ProceduralChibiHead.Paint(
 	local hair = analysis.hair
 	local masks = ProceduralChibiHead.CreateMasks(size, headBounds, hair)
 	local backHair = Face.BackHairLayer(size, headBounds, hair)
-	local secondaryTips = buffer.create(buffer.len(backHair))
-	if hair.secondaryReliable then
-		fillMask(secondaryTips, size, masks.tips, hair.secondary)
-		Raster.CompositeBufferSourceOver(backHair, secondaryTips, size)
-	end
 	local face = Face.FaceLayer(size, headBounds, skinColor)
 	local features, colors = Face.FacialFeaturesLayer(size, headBounds, skinColor, eyeColor)
 	local frontHair = Face.FrontHairLayer(size, headBounds, hair)
-	-- Source observations decide which lower side receives more secondary color.
-	if hair.secondaryReliable then
-		local tipLayer = buffer.create(buffer.len(backHair))
-		local width = math.floor(size.X)
-		local centerX = math.floor((headBounds.minX + headBounds.maxX) / 2)
-		for y = 0, math.floor(size.Y) - 1 do
-			for x = 0, width - 1 do
-				local pixelOffset = offset(width, x, y)
-				if buffer.readu8(masks.tips, pixelOffset + 3) > 0 then
-					local sideCoverage = if x < centerX
-						then hair.leftTipSecondaryCoverage
-						else hair.rightTipSecondaryCoverage
-					if sideCoverage >= 0.24 or (x + y) % 3 ~= 0 then
-						local red = math.round(hair.secondary.R * 255)
-						local green = math.round(hair.secondary.G * 255)
-						local blue = math.round(hair.secondary.B * 255)
-						Raster.SourceOverPixel(tipLayer, width, math.floor(size.Y), x, y, {
-							r = red, g = green, b = blue, a = 255,
-						})
-					end
-				end
-			end
-		end
-		Raster.CompositeBufferSourceOver(frontHair, tipLayer, size)
+
+	-- Project the spatial label distribution into canonical alpha. Texture is
+	-- observed from the thumbnail, while silhouette remains procedural.
+	local fullHairMask = Raster.UnionMasks(masks.backHair, masks.frontHair, size)
+	local hairLabelMap = mapSourceBufferToHead(
+		hair.labelMap, sourceSize, sourceBounds, size, headBounds, fullHairMask
+	)
+	local labelBack = Raster.ClipToMask(hairLabelMap, size, masks.backHair)
+	local labelFront = Raster.ClipToMask(hairLabelMap, size, masks.frontHair)
+	Raster.CompositeBufferSourceOver(backHair, labelBack, size)
+	Raster.CompositeBufferSourceOver(frontHair, labelFront, size)
+	if hair.secondaryReliable and Raster.CountMaskPixels(labelBack, size) == 0 then
+		-- A reliable secondary still receives a coherent tip mass when sparse
+		-- source labels vanish during reduction; never use a checker pattern.
+		local secondaryTips = buffer.create(buffer.len(backHair))
+		fillMask(secondaryTips, size, masks.tips, hair.secondary)
+		Raster.CompositeBufferSourceOver(backHair, secondaryTips, size)
 	end
+	local hairCore = mapSourceBufferToHead(
+		hair.hairCoreMask, sourceSize, sourceBounds, size, headBounds, fullHairMask
+	)
+
+	local backAccessories = buffer.create(buffer.len(backHair))
+	local sideAccessories = buffer.create(buffer.len(backHair))
+	local frontAccessories = buffer.create(buffer.len(backHair))
+	local projectedComponents, averageFillRatio, repairedPixels, clippedPixels =
+		projectAccessories(analysis, size, backAccessories, sideAccessories, frontAccessories)
+	local sideAllowed = Raster.SubtractMask(masks.accessoryAnchors, masks.face, size)
+	sideAccessories = Raster.ClipToMask(sideAccessories, size, sideAllowed)
+	frontAccessories = Raster.ClipToMask(frontAccessories, size, masks.frontHair)
 	local accessories = buffer.create(buffer.len(backHair))
-	local accessoryPixels = projectAccessories(analysis, sourceBounds, accessories, size, headBounds)
+	for _, layer in { backAccessories, sideAccessories, frontAccessories } do
+		Raster.CompositeBufferSourceOver(accessories, layer, size)
+	end
+
 	local withoutAccessories = buffer.create(buffer.len(backHair))
 	for _, layer in { backHair, face, features, frontHair } do
 		Raster.CompositeBufferSourceOver(withoutAccessories, layer, size)
 	end
 	local composite = buffer.create(buffer.len(backHair))
-	buffer.copy(composite, 0, withoutAccessories, 0, buffer.len(withoutAccessories))
-	Raster.CompositeBufferSourceOver(composite, accessories, size)
+	for _, layer in {
+		backAccessories,
+		backHair,
+		sideAccessories,
+		face,
+		features,
+		frontHair,
+		frontAccessories,
+	} do
+		Raster.CompositeBufferSourceOver(composite, layer, size)
+	end
 	Raster.StrokeMaskInside(composite, size, masks.backHair, inkColor)
 	Raster.StrokeMaskInside(composite, size, masks.face, skinColor:Lerp(inkColor, 0.32))
 
 	local clusterDiagnostic = buffer.create(buffer.len(backHair))
 	fillMask(clusterDiagnostic, size, masks.backHair, hair.primary)
-	if hair.secondaryReliable then fillMask(clusterDiagnostic, size, masks.tips, hair.secondary) end
-	fillMask(clusterDiagnostic, size, masks.bangs, hair.highlight)
-	local candidateDiagnostic = buffer.create(buffer.len(backHair))
-	projectAccessories(analysis, sourceBounds, candidateDiagnostic, size, headBounds)
+	Raster.CompositeBufferSourceOver(clusterDiagnostic, hairLabelMap, size)
+	local rawDiagnostic = mapSourceBufferToHead(
+		analysis.rawCandidateMask, sourceSize, sourceBounds, size, headBounds, nil
+	)
+	local mergedDiagnostic = mapSourceBufferToHead(
+		analysis.mergedCandidateMask, sourceSize, sourceBounds, size, headBounds, nil
+	)
+	local anchorDiagnostic = diagnosticMasks(size, masks)
 
 	colors.hairPrimary = hair.primary
 	colors.hairSecondary = hair.secondary
@@ -283,9 +414,17 @@ function ProceduralChibiHead.Paint(
 		features = features,
 		frontHair = frontHair,
 		accessories = accessories,
+		backAccessories = backAccessories,
+		sideAccessories = sideAccessories,
+		frontAccessories = frontAccessories,
 		hairMasks = diagnosticMasks(size, masks),
 		hairClusters = clusterDiagnostic,
-		accessoryCandidates = candidateDiagnostic,
+		hairCore = hairCore,
+		hairLabelMap = hairLabelMap,
+		accessoryCandidates = mergedDiagnostic,
+		accessoryRawCandidates = rawDiagnostic,
+		accessoryMergedGroups = mergedDiagnostic,
+		accessoryAnchors = anchorDiagnostic,
 		withoutAccessories = withoutAccessories,
 		composite = composite,
 		masks = masks,
@@ -300,9 +439,20 @@ function ProceduralChibiHead.Paint(
 			fallbackUsed = false,
 			primaryCoverage = hair.primaryCoverage,
 			secondaryCoverage = hair.secondaryCoverage,
+			hairCoreCoverage = hair.hairCoreCoverage,
+			fringeGapCount = countFringeGaps(masks.frontHair, size),
+			strayPixelCount = countStrays(composite, size),
 			accessoryCandidates = analysis.metrics.candidates,
 			accessoriesAccepted = analysis.metrics.accepted,
 			accessoriesRejectedFace = analysis.metrics.rejectedFace,
+			rawComponents = analysis.metrics.rawComponents,
+			mergedComponents = analysis.metrics.mergedComponents,
+			acceptedComponents = analysis.metrics.acceptedComponents,
+			projectedComponents = projectedComponents,
+			averageFillRatio = averageFillRatio,
+			repairedPixels = repairedPixels,
+			clippedPixels = clippedPixels,
+			byZone = analysis.metrics.byZone,
 			fallbackPixels = 0,
 		},
 	}

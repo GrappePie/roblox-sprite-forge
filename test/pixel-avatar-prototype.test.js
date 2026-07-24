@@ -78,6 +78,7 @@ test("Roblox-only pixel avatar keeps centralized requested settings", () => {
     "ProceduralChibiAlphaThreshold",
     "ProceduralChibiHeadHeightRatio",
     "ProceduralChibiHeadWidthRatio",
+    "ProceduralChibiHeadWidthAuto",
     "ProceduralChibiHairSecondaryMinimumCoverage",
     "ProceduralChibiAccessoryMinimumConfidence",
     "ProceduralChibiMaxAccessoryComponents",
@@ -140,6 +141,11 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralRaster, /SampleAreaPremultiplied/);
   assert.match(proceduralRaster, /premultipliedRed/);
   assert.match(proceduralRaster, /SourceOverPixel/);
+  assert.match(proceduralRaster, /connectivity == 8/);
+  assert.match(proceduralRaster, /ProjectComponentResampled/);
+  assert.match(proceduralRaster, /FillEllipse/);
+  assert.match(proceduralRaster, /FillRoundedPolygon/);
+  assert.match(proceduralRaster, /SubtractMask/);
   assert.match(proceduralRaster, /ProjectRegionToMask/);
   assert.match(proceduralRaster, /MaskBounds/);
   assert.match(proceduralRaster, /FillPolygon/);
@@ -169,16 +175,29 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralChibi, /HairClusters/);
   assert.match(proceduralChibi, /HairMasks/);
   assert.match(proceduralChibi, /AccessoryCandidates/);
+  for (const stage of [
+    "HairCore", "HairLabelMap", "AccessoryRawCandidates",
+    "AccessoryMergedGroups", "AccessoryAnchors", "AccessoryBackLayer",
+    "AccessorySideLayer", "AccessoryFrontLayer", "FringeMask",
+    "SkirtSourceMask", "ShoulderRepair", "FinalBeforeQuantize",
+  ]) {
+    assert.ok(proceduralChibi.includes(stage), `missing chibi diagnostic: ${stage}`);
+  }
   assert.match(proceduralChibi, /HeadWithoutAccessories/);
   assert.match(proceduralChibi, /HeadComposite/);
   assert.match(proceduralChibi, /LegacyCopiedHead/);
   assert.match(proceduralHeadAnalyzer, /protectedFace/);
   assert.match(proceduralHeadAnalyzer, /ConnectedComponents/);
+  assert.match(proceduralHeadAnalyzer, /AccessoryDepth/);
+  assert.match(proceduralHeadAnalyzer, /AccessoryKind/);
+  assert.match(proceduralHeadAnalyzer, /pairAccessories/);
   assert.match(proceduralHead, /CreateMasks/);
   assert.match(proceduralHead, /secondaryReliable/);
   assert.match(hairColorAnalyzer, /primaryCoverage/);
   assert.match(hairColorAnalyzer, /secondaryCoverage/);
   assert.match(hairColorAnalyzer, /spatialSpan/);
+  assert.match(hairColorAnalyzer, /hairCoreMask/);
+  assert.match(hairColorAnalyzer, /labelMap/);
   assert.doesNotMatch(hairColorAnalyzer, /primary = bucketColor\(buckets\[1\]\)/);
   assert.match(proceduralChibi, /xpcall/);
   assert.match(proceduralChibi, /headImage:Destroy/);
@@ -228,6 +247,12 @@ test("procedural Luau self-test covers synthetic buffer behavior", () => {
   assert.match(proceduralSelfTest, /Original dark eyes survived as accessory candidates/);
   assert.match(proceduralSelfTest, /BackHairLayer is empty/);
   assert.match(proceduralSelfTest, /Synthetic head unexpectedly used legacy fallback/);
+  assert.match(proceduralSelfTest, /8-connectivity split diagonal pixels/);
+  assert.match(proceduralSelfTest, /Compatible left\/right accessories were not paired/);
+  assert.match(proceduralSelfTest, /Accessory inverse projection is too sparse/);
+  assert.match(proceduralSelfTest, /Procedural fringe contains a wide gap/);
+  assert.match(proceduralSelfTest, /Shoulder repair overwrote valid texture/);
+  assert.match(proceduralSelfTest, /Central skirt component was not retained/);
 });
 
 test("procedural head owns its alpha and keeps copied pixels debug-only", () => {
@@ -239,6 +264,11 @@ test("procedural head owns its alpha and keeps copied pixels debug-only", () => 
   assert.match(proceduralRaster, /CardinalDilate/);
   assert.match(proceduralRaster, /CardinalErode/);
   assert.match(proceduralRaster, /ProjectComponent/);
+  assert.match(proceduralRaster, /ProjectComponentResampled/);
+  assert.match(proceduralHead, /backAccessories/);
+  assert.match(proceduralHead, /sideAccessories/);
+  assert.match(proceduralHead, /frontAccessories/);
+  assert.doesNotMatch(proceduralHead, /\(x \+ y\) % 3/);
   assert.match(proceduralChibi, /stage == "LegacyCopiedHead"/);
   assert.match(proceduralChibi, /fallbackEnabled and lowConfidence/);
   assert.match(controller, /head procedural=%s/);

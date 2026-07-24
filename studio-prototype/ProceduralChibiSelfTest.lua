@@ -96,6 +96,31 @@ local function rowCenter(mask: buffer, width: number, y: number): number
 	return sum / count
 end
 
+local function countColorsInRows(
+	pixels: buffer,
+	size: Vector2,
+	mask: buffer,
+	minY: number,
+	maxY: number
+): number
+	local width = math.floor(size.X)
+	local colors: { [number]: boolean } = {}
+	for y = minY, maxY do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(mask, pixelOffset + 3) > 0 and buffer.readu8(pixels, pixelOffset + 3) > 0 then
+				local key = math.floor(buffer.readu8(pixels, pixelOffset) / 24) * 121
+					+ math.floor(buffer.readu8(pixels, pixelOffset + 1) / 24) * 11
+					+ math.floor(buffer.readu8(pixels, pixelOffset + 2) / 24)
+				colors[key] = true
+			end
+		end
+	end
+	local count = 0
+	for _ in colors do count += 1 end
+	return count
+end
+
 local function unionContains(masks: { [string]: buffer }, pixelOffset: number): boolean
 	for _, mask in masks do
 		if buffer.readu8(mask, pixelOffset + 3) > 0 then
@@ -205,6 +230,12 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	assert(paletteMetrics.paletteColors > 32, "48-color request was internally capped at 32")
 	assert(Finalizer.CountOpaqueColors(paletteOutput, paletteSize) <= 48, "Final color count exceeded requested limit")
 
+	local diagonalMask = buffer.create(8 * 8 * 4)
+	buffer.writeu8(diagonalMask, offset(8, 2, 2) + 3, 255)
+	buffer.writeu8(diagonalMask, offset(8, 3, 3) + 3, 255)
+	assert(#Raster.ConnectedComponents(diagonalMask, Vector2.new(8, 8), nil, 1, 4) == 2, "4-connectivity merged diagonal pixels")
+	assert(#Raster.ConnectedComponents(diagonalMask, Vector2.new(8, 8), nil, 1, 8) == 1, "8-connectivity split diagonal pixels")
+
 	local source = { minX = 12, minY = 20, maxX = 91, maxY = 219 }
 	local bands = Raster.MakeBodyBands(source)
 	assert(bands.torso.maxY + 1 == bands.hips.minY, "Torso and hips overlap")
@@ -218,7 +249,7 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	assert(analysis.midriffUsesSkin, "Synthetic exposed midriff was not classified as skin")
 	assert(analysis.leftLegUsesSkin and analysis.rightLegUsesSkin, "Synthetic skin legs were not classified as skin")
 	local bodySize = Vector2.new(128, 256)
-	local projected, accented, painted, masks, lockedColors, regionMetrics = Body.Paint(
+	local projected, accented, painted, masks, lockedColors, regionMetrics, bodyMetrics = Body.Paint(
 		bodySize,
 		sourcePixels,
 		sourceSize,
@@ -242,6 +273,13 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	assert(countNearColor(accented, bodySize, masks.skirt, Color3.fromRGB(121, 56, 224), 120) > 2, "Purple skirt panel was lost")
 	assert(countNearColor(projected, bodySize, masks.leftBoot, Color3.fromRGB(18, 19, 27), 55) > 40, "Dark left boot was lost")
 	assert(regionMetrics.torso.accentComponents > 0, "Torso accent component was not recovered")
+	assert(countOpaque(masks.waistband, bodySize) > 0, "Skirt waistband is empty")
+	assert(countOpaque(masks.upperPanels, bodySize) > 0, "Skirt upper panels are empty")
+	assert(countOpaque(masks.lowerRuffle, bodySize) > 0, "Skirt lower ruffle is empty")
+	assert(bodyMetrics.lowerGarmentCentralCoverage > 0.1, "Central skirt component was not retained")
+	assert(bodyMetrics.shoulderPixelsOverwritten == 0, "Shoulder repair overwrote valid texture")
+	assert(countColorsInRows(projected, bodySize, masks.leftArm, 107, 154) >= 3, "Left shoulder was flattened")
+	assert(countColorsInRows(projected, bodySize, masks.rightArm, 107, 154) >= 3, "Right shoulder was flattened")
 
 	for y = 0, 255 do
 		for x = 0, 127 do
@@ -303,6 +341,12 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 				headAnalysis.metrics.rejectedFace
 			)
 		)
+		assert(headAnalysis.metrics.rawComponents >= headAnalysis.metrics.mergedComponents, "Fragment merging increased component count")
+		local paired = 0
+		for _, accessory in headAnalysis.accessories do
+			if accessory.pairId then paired += 1 end
+		end
+		assert(paired >= 2, "Compatible left/right accessories were not paired")
 		assert(
 			buffer.readu8(headAnalysis.candidateMask, offset(96, 40, 55) + 3) == 0,
 			"Original dark eyes survived as accessory candidates"
@@ -322,6 +366,10 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 		assert(countOpaque(paintedHead.face, bodySize) > 500, "Procedural face mask is empty")
 		assert(countOpaque(paintedHead.frontHair, bodySize) > 100, "Procedural fringe is empty")
 		assert(countOpaque(paintedHead.accessories, bodySize) > 0, "Accessory projection is empty")
+		assert(paintedHead.metrics.projectedComponents > 0, "No accessory component was projected")
+		assert(paintedHead.metrics.averageFillRatio > 0.08, "Accessory inverse projection is too sparse")
+		assert(paintedHead.metrics.fringeGapCount == 0, "Procedural fringe contains a wide gap")
+		assert(paintedHead.metrics.hairCoreCoverage > 0.08, "Hair core coverage is too low")
 		assert(countOpaque(paintedHead.composite, bodySize) > countOpaque(paintedHead.face, bodySize), "Head layers did not compose")
 		assert(not paintedHead.metrics.fallbackUsed, "Synthetic head unexpectedly used legacy fallback")
 	end

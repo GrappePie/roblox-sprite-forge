@@ -52,6 +52,9 @@ export type OutfitAnalysis = {
 	rightLegUsesSkin: boolean,
 	centerX: number,
 	rows: { RowProfile },
+	lowerGarmentMask: buffer,
+	lowerGarmentSkinRatio: number,
+	lowerGarmentCentralCoverage: number,
 	metrics: { [string]: SourceRegionMetrics },
 }
 
@@ -310,7 +313,7 @@ function ProceduralChibiOutfitAnalyzer.Analyze(
 		{ "midriff", 0.35, 0.43, "center", false, { bodyColors.torso, bodyColors.head }, bodyColors.torso },
 		-- Warm rainbow/pink skirt panels can resemble shaded skin numerically;
 		-- preserve the complete garment texture in this central region.
-		{ "lowerGarment", 0.43, 0.62, "centerWide", false, { bodyColors.leftLeg, bodyColors.rightLeg }, bodyColors.torso },
+		{ "lowerGarment", 0.30, 0.62, "centerWide", false, { bodyColors.leftLeg, bodyColors.rightLeg }, bodyColors.torso },
 		{ "leftLeg", 0.62, 0.83, "left", false, { bodyColors.leftLeg, bodyColors.head }, bodyColors.leftLeg },
 		{ "rightLeg", 0.62, 0.83, "right", false, { bodyColors.rightLeg, bodyColors.head }, bodyColors.rightLeg },
 		{ "leftBoot", 0.83, 1.00, "left", true, { bodyColors.leftLeg, bodyColors.head }, Color3.fromRGB(24, 25, 34) },
@@ -337,6 +340,49 @@ function ProceduralChibiOutfitAnalyzer.Analyze(
 		metrics[name] = regionMetrics
 		skinRatios[name] = skinSamples / math.max(1, opaqueSamples)
 	end
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local lowerGarmentMask = buffer.create(width * height * 4)
+	local garment = regions.lowerGarment
+	local garmentWidth = garment.bounds.maxX - garment.bounds.minX + 1
+	local garmentOpaque = 0
+	local garmentSkin = 0
+	for y = garment.bounds.minY, garment.bounds.maxY do
+		for x = garment.bounds.minX, garment.bounds.maxX do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(pixels, pixelOffset + 3) < garment.minAlpha then continue end
+			garmentOpaque += 1
+			local red = buffer.readu8(pixels, pixelOffset)
+			local green = buffer.readu8(pixels, pixelOffset + 1)
+			local blue = buffer.readu8(pixels, pixelOffset + 2)
+			local chroma = math.max(red, green, blue) - math.min(red, green, blue)
+			local skinLike = ProceduralChibiOutfitAnalyzer.IsSkinLike(
+				red, green, blue, { bodyColors.leftArm, bodyColors.rightArm, bodyColors.leftLeg, bodyColors.rightLeg, bodyColors.head }
+			)
+			if skinLike then garmentSkin += 1 end
+			local central = math.abs(x - centerX) <= garmentWidth * 0.32
+			-- Warm pixels in the center may be legitimate skirt panels. Warm
+			-- side islands are much more likely to be hands and stay excluded.
+			if not skinLike or (central and chroma >= 38) then
+				buffer.writeu8(lowerGarmentMask, pixelOffset + 3, 255)
+			end
+		end
+	end
+	local garmentComponents = Raster.ConnectedComponents(lowerGarmentMask, size, pixels, 1, 8)
+	local centralGarmentMask = buffer.create(width * height * 4)
+	local centralPixels = 0
+	for _, component in garmentComponents do
+		local nearCenter = math.abs(component.centroid.X - centerX) <= garmentWidth * 0.34
+		local touchesWaist = component.bounds.minY <= garment.bounds.minY + math.floor(
+			(garment.bounds.maxY - garment.bounds.minY + 1) * 0.4
+		)
+		if nearCenter and (touchesWaist or component.area >= garmentWidth * 0.16) then
+			for _, pixel in component.pixels do
+				buffer.writeu8(centralGarmentMask, offset(width, pixel.x, pixel.y) + 3, 255)
+				centralPixels += 1
+			end
+		end
+	end
 	return {
 		torso = regions.torso,
 		leftSleeve = regions.leftSleeve,
@@ -352,6 +398,9 @@ function ProceduralChibiOutfitAnalyzer.Analyze(
 		rightLegUsesSkin = skinRatios.rightLeg >= 0.28,
 		centerX = centerX,
 		rows = rows,
+		lowerGarmentMask = centralGarmentMask,
+		lowerGarmentSkinRatio = garmentSkin / math.max(1, garmentOpaque),
+		lowerGarmentCentralCoverage = centralPixels / math.max(1, garmentWidth * (garment.bounds.maxY - garment.bounds.minY + 1)),
 		metrics = metrics,
 	}
 end

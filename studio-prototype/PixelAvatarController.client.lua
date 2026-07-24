@@ -67,6 +67,7 @@ local resolutionButtons: { [number]: TextButton } = {}
 local rateButtons: { [number]: TextButton } = {}
 local outlineButton: TextButton
 local stageButton: TextButton
+local stageEvent: BindableEvent
 local thumbnailFrame: Frame
 local thumbnailLabel: ImageLabel
 local thumbnailImage: EditableImage? = nil
@@ -147,6 +148,9 @@ local function createPanel()
 	screen.ResetOnSpawn = false
 	screen.DisplayOrder = 100
 	screen.Parent = playerGui
+	stageEvent = Instance.new("BindableEvent")
+	stageEvent.Name = "SetProceduralDebugStage"
+	stageEvent.Parent = screen
 
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
@@ -441,7 +445,9 @@ local function regenerateThumbnail()
 					EyeColor = Config.ProceduralChibiEyeColor,
 					HeadRatio = Config.ThumbnailHeadRatio,
 					HeadHeightRatio = Config.ProceduralChibiHeadHeightRatio,
-					HeadWidthRatio = Config.ProceduralChibiHeadWidthRatio,
+					HeadWidthRatio = if Config.ProceduralChibiHeadWidthAuto
+						then nil
+						else Config.ProceduralChibiHeadWidthRatio,
 					HairSecondaryMinimumCoverage =
 						Config.ProceduralChibiHairSecondaryMinimumCoverage,
 					AccessoryMinimumConfidence =
@@ -505,6 +511,26 @@ local function regenerateThumbnail()
 					renderMetrics.head.accessoriesRejectedFace,
 					renderMetrics.head.fallbackPixels,
 					tostring(renderMetrics.head.fallbackUsed)
+				))
+				print(string.format(
+					"[PixelAvatar] accessory raw=%d merged=%d accepted=%d projected=%d fill=%.3f repaired=%d clipped=%d hairCore=%.3f fringeGaps=%d strays=%d",
+					renderMetrics.head.rawComponents,
+					renderMetrics.head.mergedComponents,
+					renderMetrics.head.acceptedComponents,
+					renderMetrics.head.projectedComponents,
+					renderMetrics.head.averageFillRatio,
+					renderMetrics.head.repairedPixels,
+					renderMetrics.head.clippedPixels,
+					renderMetrics.head.hairCoreCoverage,
+					renderMetrics.head.fringeGapCount,
+					renderMetrics.head.strayPixelCount
+				))
+				print(string.format(
+					"[PixelAvatar] body skirtSkin=%.3f skirtCentral=%.3f shoulderRepaired=%d shoulderOverwritten=%d",
+					renderMetrics.body.lowerGarmentSkinRatio,
+					renderMetrics.body.lowerGarmentCentralCoverage,
+					renderMetrics.body.shoulderPixelsRepaired,
+					renderMetrics.body.shoulderPixelsOverwritten
 				))
 				for regionName, regionMetrics in renderMetrics.regions do
 					local fallbackRatio = regionMetrics.fallbackPixels
@@ -906,6 +932,18 @@ table.insert(globalConnections, stageButton.Activated:Connect(function()
 	refreshButtonStyles()
 	refreshStatus()
 end))
+stageEvent.Event:Connect(function(requestedStage: string)
+	if not table.find(Config.ProceduralChibiDebugStages, requestedStage) then
+		warn("[PixelAvatar] unknown requested debug stage: " .. tostring(requestedStage))
+		return
+	end
+	proceduralDebugStage = requestedStage
+	if mode == "ProceduralChibi" then
+		regenerateThumbnail()
+	end
+	refreshButtonStyles()
+	refreshStatus()
+end)
 for index, button in resolutionButtons do
 	table.insert(globalConnections, button.Activated:Connect(function()
 		resolution = Config.Resolutions[index]

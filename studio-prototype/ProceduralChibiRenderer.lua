@@ -23,13 +23,25 @@ export type DebugStage =
 	| "BodyAccents"
 	| "HeadSource"
 	| "HairClusters"
+	| "HairCore"
+	| "HairLabelMap"
 	| "HairMasks"
 	| "AccessoryCandidates"
+	| "AccessoryRawCandidates"
+	| "AccessoryMergedGroups"
+	| "AccessoryAnchors"
+	| "AccessoryBackLayer"
+	| "AccessorySideLayer"
+	| "AccessoryFrontLayer"
+	| "FringeMask"
+	| "SkirtSourceMask"
+	| "ShoulderRepair"
 	| "HeadWithoutAccessories"
 	| "HeadComposite"
 	| "LegacyCopiedHead"
 	| "BeforeFace"
 	| "BeforeFinalize"
+	| "FinalBeforeQuantize"
 	| "Final"
 
 export type Options = {
@@ -59,6 +71,7 @@ export type Metrics = {
 	totalFallbackPixels: number,
 	accentComponents: number,
 	head: Head.HeadMetrics,
+	body: Body.BodyMetrics,
 }
 
 type AvatarSignals = {
@@ -78,13 +91,25 @@ local VALID_STAGES: { [string]: boolean } = {
 	BodyAccents = true,
 	HeadSource = true,
 	HairClusters = true,
+	HairCore = true,
+	HairLabelMap = true,
 	HairMasks = true,
 	AccessoryCandidates = true,
+	AccessoryRawCandidates = true,
+	AccessoryMergedGroups = true,
+	AccessoryAnchors = true,
+	AccessoryBackLayer = true,
+	AccessorySideLayer = true,
+	AccessoryFrontLayer = true,
+	FringeMask = true,
+	SkirtSourceMask = true,
+	ShoulderRepair = true,
 	HeadWithoutAccessories = true,
 	HeadComposite = true,
 	LegacyCopiedHead = true,
 	BeforeFace = true,
 	BeforeFinalize = true,
+	FinalBeforeQuantize = true,
 	Final = true,
 }
 
@@ -206,7 +231,8 @@ local function summarizeMetrics(
 	pixels: buffer,
 	size: Vector2,
 	regions: { [string]: RegionMetrics },
-	headMetrics: Head.HeadMetrics?
+	headMetrics: Head.HeadMetrics?,
+	bodyMetrics: Body.BodyMetrics?
 ): Metrics
 	local colors = ImageFinalizer.CountOpaqueColors(pixels, size)
 	local fallback = 0
@@ -228,10 +254,27 @@ local function summarizeMetrics(
 			fallbackUsed = false,
 			primaryCoverage = 0,
 			secondaryCoverage = 0,
+			hairCoreCoverage = 0,
+			fringeGapCount = 0,
+			strayPixelCount = 0,
 			accessoryCandidates = 0,
 			accessoriesAccepted = 0,
 			accessoriesRejectedFace = 0,
+			rawComponents = 0,
+			mergedComponents = 0,
+			acceptedComponents = 0,
+			projectedComponents = 0,
+			averageFillRatio = 0,
+			repairedPixels = 0,
+			clippedPixels = 0,
+			byZone = {},
 			fallbackPixels = 0,
+		},
+		body = bodyMetrics or {
+			lowerGarmentSkinRatio = 0,
+			lowerGarmentCentralCoverage = 0,
+			shoulderPixelsRepaired = 0,
+			shoulderPixelsOverwritten = 0,
 		},
 	}
 end
@@ -361,7 +404,7 @@ function ProceduralChibiRenderer.Create(
 		local avatarSignals = readAvatarSignals(userId, options.SkinColor)
 		local analysis = OutfitAnalyzer.Analyze(avatarPixels, avatarSourceSize, bodySource, avatarSignals.bodyColors)
 		local inkColor = options.OutlineColor or Color3.fromRGB(28, 34, 46)
-		local bodyProjected, bodyAccents, proceduralBody, bodyMasks, bodyLockedColors, regionMetrics =
+		local bodyProjected, bodyAccents, proceduralBody, bodyMasks, bodyLockedColors, regionMetrics, bodyMetrics, bodyDebug =
 			Body.Paint(
 				outputSize,
 				avatarPixels,
@@ -372,14 +415,6 @@ function ProceduralChibiRenderer.Create(
 			)
 		local headBottom =
 			math.floor(outputHeight * math.clamp(options.HeadHeightRatio or 0.41, 0.34, 0.48))
-		local headWidth = math.floor(outputWidth * math.clamp(options.HeadWidthRatio or 0.82, 0.68, 0.94))
-		local headCenter = math.floor(outputWidth / 2)
-		local headTarget: Bounds = {
-			minX = headCenter - math.floor(headWidth / 2),
-			minY = 3,
-			maxX = headCenter + math.floor(headWidth / 2),
-			maxY = headBottom,
-		}
 		local headAnalysis = HeadAnalyzer.Analyze(
 			headPixels,
 			headSourceSize,
@@ -392,6 +427,22 @@ function ProceduralChibiRenderer.Create(
 				MaxAccessoryComponents = options.MaxAccessoryComponents,
 			}
 		)
+		local automaticWidthRatio = math.clamp(
+			0.74 + (headAnalysis.hair.hairCoreAspect - 0.65) * 0.16,
+			0.74,
+			0.82
+		)
+		local headWidthRatio = if options.HeadWidthRatio
+			then math.clamp(options.HeadWidthRatio, 0.68, 0.94)
+			else automaticWidthRatio
+		local headWidth = math.floor(outputWidth * headWidthRatio)
+		local headCenter = math.floor(outputWidth / 2)
+		local headTarget: Bounds = {
+			minX = headCenter - math.floor(headWidth / 2),
+			minY = 3,
+			maxX = headCenter + math.floor(headWidth / 2),
+			maxY = headBottom,
+		}
 		local headResult = Head.Paint(
 			outputSize,
 			headTarget,
@@ -436,6 +487,10 @@ function ProceduralChibiRenderer.Create(
 			Raster.CompositeBufferSourceOver(outputPixels, bodyProjected, outputSize)
 		elseif stage == "BodyAccents" then
 			Raster.CompositeBufferSourceOver(outputPixels, bodyAccents, outputSize)
+		elseif stage == "SkirtSourceMask" then
+			Raster.CompositeBufferSourceOver(outputPixels, bodyDebug.SkirtSourceMask, outputSize)
+		elseif stage == "ShoulderRepair" then
+			Raster.CompositeBufferSourceOver(outputPixels, bodyDebug.ShoulderRepair, outputSize)
 		else
 			Raster.CompositeBufferSourceOver(outputPixels, proceduralBody, outputSize)
 			if stage == "HeadSource" then
@@ -443,16 +498,36 @@ function ProceduralChibiRenderer.Create(
 				Raster.CopyRegionArea(headPixels, headSourceSize, headAnalysisBounds, outputPixels, outputSize, headTarget)
 			elseif stage == "HairClusters" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairClusters, outputSize)
+			elseif stage == "HairCore" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairCore, outputSize)
+			elseif stage == "HairLabelMap" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairLabelMap, outputSize)
 			elseif stage == "HairMasks" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.hairMasks, outputSize)
 			elseif stage == "AccessoryCandidates" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCandidates, outputSize)
+			elseif stage == "AccessoryRawCandidates" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryRawCandidates, outputSize)
+			elseif stage == "AccessoryMergedGroups" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryMergedGroups, outputSize)
+			elseif stage == "AccessoryAnchors" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryAnchors, outputSize)
+			elseif stage == "AccessoryBackLayer" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.backAccessories, outputSize)
+			elseif stage == "AccessorySideLayer" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.sideAccessories, outputSize)
+			elseif stage == "AccessoryFrontLayer" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.frontAccessories, outputSize)
+			elseif stage == "FringeMask" then
+				paintMaskDiagnostic(outputPixels, outputSize, { fringe = headResult.masks.frontHair })
 			elseif stage == "HeadWithoutAccessories" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.withoutAccessories, outputSize)
 			elseif stage == "BeforeFace" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.backHair, outputSize)
 			elseif stage == "LegacyCopiedHead" then
 				Raster.CopyRegionArea(avatarPixels, avatarSourceSize, headSource, outputPixels, outputSize, headTarget)
+			elseif stage == "HeadComposite" or stage == "BeforeFinalize" or stage == "FinalBeforeQuantize" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.composite, outputSize)
 			else
 				local fallbackEnabled = options.HeadFallbackEnabled ~= false
 				local lowConfidence = headAnalysis.hair.primaryCoverage < 0.002
@@ -477,13 +552,25 @@ function ProceduralChibiRenderer.Create(
 			or stage == "BodyAccents"
 			or stage == "HeadSource"
 			or stage == "HairClusters"
+			or stage == "HairCore"
+			or stage == "HairLabelMap"
 			or stage == "HairMasks"
 			or stage == "AccessoryCandidates"
+			or stage == "AccessoryRawCandidates"
+			or stage == "AccessoryMergedGroups"
+			or stage == "AccessoryAnchors"
+			or stage == "AccessoryBackLayer"
+			or stage == "AccessorySideLayer"
+			or stage == "AccessoryFrontLayer"
+			or stage == "FringeMask"
+			or stage == "SkirtSourceMask"
+			or stage == "ShoulderRepair"
 			or stage == "HeadWithoutAccessories"
 			or stage == "HeadComposite"
 			or stage == "LegacyCopiedHead"
 			or stage == "BeforeFace"
-			or stage == "BeforeFinalize" then
+			or stage == "BeforeFinalize"
+			or stage == "FinalBeforeQuantize" then
 			outputImage = allocateImage(outputSize, outputPixels)
 			return outputImage, summarizeMetrics(
 				stage,
@@ -491,7 +578,8 @@ function ProceduralChibiRenderer.Create(
 				outputPixels,
 				outputSize,
 				regionMetrics,
-				headResult.metrics
+				headResult.metrics,
+				bodyMetrics
 			)
 		end
 
@@ -516,7 +604,8 @@ function ProceduralChibiRenderer.Create(
 			finalizedPixels,
 			outputSize,
 			regionMetrics,
-			headResult.metrics
+			headResult.metrics,
+			bodyMetrics
 		)
 		finalMetrics.requestedColors = finalizerMetrics.requestedColors
 		finalMetrics.paletteColors = finalizerMetrics.paletteColors

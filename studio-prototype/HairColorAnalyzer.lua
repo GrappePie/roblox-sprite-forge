@@ -10,6 +10,10 @@ export type HairColors = {
 	secondaryReliable: boolean,
 	leftTipSecondaryCoverage: number,
 	rightTipSecondaryCoverage: number,
+	hairCoreMask: buffer,
+	labelMap: buffer,
+	hairCoreCoverage: number,
+	hairCoreAspect: number,
 }
 
 type Bucket = {
@@ -193,6 +197,7 @@ function HairColorAnalyzer.Analyze(
 	buckets = mergedBuckets
 	local fallback = Color3.fromRGB(86, 116, 89)
 	if #buckets == 0 then
+		local emptyMask = buffer.create(width * height * 4)
 		return {
 			primary = fallback,
 			secondary = fallback:Lerp(Color3.fromRGB(110, 74, 140), 0.25),
@@ -203,6 +208,10 @@ function HairColorAnalyzer.Analyze(
 			secondaryReliable = false,
 			leftTipSecondaryCoverage = 0,
 			rightTipSecondaryCoverage = 0,
+			hairCoreMask = emptyMask,
+			labelMap = buffer.create(width * height * 4),
+			hairCoreCoverage = 0,
+			hairCoreAspect = 0.78,
 		}
 	end
 
@@ -262,6 +271,113 @@ function HairColorAnalyzer.Analyze(
 	if perceptualDistance(primary, shadow) < 8 then
 		shadow = primary:Lerp(Color3.fromRGB(24, 22, 38), 0.36)
 	end
+	-- Keep a spatial observation instead of reducing hair to four swatches.
+	-- The mask intentionally accepts the secondary hair color even when a
+	-- similarly coloured ornament exists; connected spatial coverage decides
+	-- which pixels form the reusable hair core.
+	local hairCoreMask = buffer.create(width * height * 4)
+	local labelMap = buffer.create(width * height * 4)
+	local corePixels = 0
+	local coreMinX = bounds.maxX
+	local coreMaxX = bounds.minX
+	local coreMinY = bounds.maxY
+	local coreMaxY = bounds.minY
+	for y = math.max(0, bounds.minY), math.min(height - 1, bounds.maxY) do
+		for x = math.max(0, bounds.minX), math.min(width - 1, bounds.maxX) do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(pixels, pixelOffset + 3) < threshold then continue end
+			local red = buffer.readu8(pixels, pixelOffset)
+			local green = buffer.readu8(pixels, pixelOffset + 1)
+			local blue = buffer.readu8(pixels, pixelOffset + 2)
+			if rgbDistance(red, green, blue, skinColor) < 42 then continue end
+			local distances = {
+				rgbDistance(red, green, blue, primary),
+				rgbDistance(red, green, blue, secondary),
+				rgbDistance(red, green, blue, highlight),
+				rgbDistance(red, green, blue, shadow),
+			}
+			local best = 1
+			for index = 2, 4 do
+				if distances[index] < distances[best] then best = index end
+			end
+			if distances[best] <= 58 then
+				buffer.writeu8(hairCoreMask, pixelOffset + 3, 255)
+				local labelColor = ({ primary, secondary, highlight, shadow })[best]
+				buffer.writeu8(labelMap, pixelOffset, math.round(labelColor.R * 255))
+				buffer.writeu8(labelMap, pixelOffset + 1, math.round(labelColor.G * 255))
+				buffer.writeu8(labelMap, pixelOffset + 2, math.round(labelColor.B * 255))
+				buffer.writeu8(labelMap, pixelOffset + 3, 255)
+				corePixels += 1
+				coreMinX = math.min(coreMinX, x)
+				coreMaxX = math.max(coreMaxX, x)
+				coreMinY = math.min(coreMinY, y)
+				coreMaxY = math.max(coreMaxY, y)
+			end
+		end
+	end
+	-- Eight-connectivity preserves diagonal strands. Retain the largest broad
+	-- hair mass as the core so small same-colour clips remain accessory input.
+	local coreComponents = {}
+	local visited: { [number]: boolean } = {}
+	local deltas = {
+		Vector2.new(-1, -1), Vector2.new(0, -1), Vector2.new(1, -1),
+		Vector2.new(-1, 0), Vector2.new(1, 0),
+		Vector2.new(-1, 1), Vector2.new(0, 1), Vector2.new(1, 1),
+	}
+	for y = math.max(0, bounds.minY), math.min(height - 1, bounds.maxY) do
+		for x = math.max(0, bounds.minX), math.min(width - 1, bounds.maxX) do
+			local key = y * width + x
+			if visited[key] or buffer.readu8(hairCoreMask, offset(width, x, y) + 3) == 0 then continue end
+			local queue = { key }
+			local queueIndex = 1
+			local members = {}
+			visited[key] = true
+			while queueIndex <= #queue do
+				local current = queue[queueIndex]
+				queueIndex += 1
+				table.insert(members, current)
+				local currentX = current % width
+				local currentY = math.floor(current / width)
+				for _, delta in deltas do
+					local neighborX = currentX + delta.X
+					local neighborY = currentY + delta.Y
+					local neighborKey = neighborY * width + neighborX
+					if neighborX >= 0 and neighborY >= 0 and neighborX < width and neighborY < height
+						and not visited[neighborKey]
+						and buffer.readu8(hairCoreMask, offset(width, neighborX, neighborY) + 3) > 0 then
+						visited[neighborKey] = true
+						table.insert(queue, neighborKey)
+					end
+				end
+			end
+			table.insert(coreComponents, members)
+		end
+	end
+	table.sort(coreComponents, function(left, right) return #left > #right end)
+	local retained = buffer.create(width * height * 4)
+	corePixels = 0
+	coreMinX = bounds.maxX
+	coreMaxX = bounds.minX
+	coreMinY = bounds.maxY
+	coreMaxY = bounds.minY
+	for componentIndex = 1, math.min(3, #coreComponents) do
+		local members = coreComponents[componentIndex]
+		if componentIndex > 1 and #members < #coreComponents[1] * 0.08 then break end
+		for _, key in members do
+			local x = key % width
+			local y = math.floor(key / width)
+			buffer.writeu8(retained, offset(width, x, y) + 3, 255)
+			corePixels += 1
+			coreMinX = math.min(coreMinX, x)
+			coreMaxX = math.max(coreMaxX, x)
+			coreMinY = math.min(coreMinY, y)
+			coreMaxY = math.max(coreMaxY, y)
+		end
+	end
+	hairCoreMask = retained
+	local coreAspect = if corePixels > 0
+		then (coreMaxX - coreMinX + 1) / math.max(1, coreMaxY - coreMinY + 1)
+		else 0.78
 	return {
 		primary = primary,
 		secondary = secondary,
@@ -272,6 +388,10 @@ function HairColorAnalyzer.Analyze(
 		secondaryReliable = secondaryReliable,
 		leftTipSecondaryCoverage = if secondaryBucket then secondaryBucket.leftTips / math.max(1, secondaryBucket.tips) else 0,
 		rightTipSecondaryCoverage = if secondaryBucket then secondaryBucket.rightTips / math.max(1, secondaryBucket.tips) else 0,
+		hairCoreMask = hairCoreMask,
+		labelMap = labelMap,
+		hairCoreCoverage = corePixels / math.max(1, boundsWidth * boundsHeight),
+		hairCoreAspect = coreAspect,
 	}
 end
 

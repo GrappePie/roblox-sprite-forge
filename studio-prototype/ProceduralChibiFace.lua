@@ -108,7 +108,15 @@ function ProceduralChibiFace.BackHairLayer(size: Vector2, headBounds: Bounds, ha
 	local g = geometry(headBounds)
 	local top = headBounds.minY + math.floor(g.height * 0.1)
 	local bottom = headBounds.minY + math.floor(g.height * 0.98)
-	polygon(layer, size, {
+	local dome = buffer.create(buffer.len(layer))
+	Raster.FillEllipse(
+		dome,
+		size,
+		Vector2.new(g.centerX, top + math.floor(g.height * 0.42)),
+		Vector2.new(math.floor(g.width * 0.34), math.floor(g.height * 0.43))
+	)
+	local bob = buffer.create(buffer.len(layer))
+	Raster.FillRoundedPolygon(bob, size, {
 		Vector2.new(g.centerX - math.floor(g.width * 0.31), top + math.floor(g.height * 0.18)),
 		Vector2.new(g.centerX - math.floor(g.width * 0.25), top + math.floor(g.height * 0.08)),
 		Vector2.new(g.centerX - math.floor(g.width * 0.14), top),
@@ -121,7 +129,15 @@ function ProceduralChibiFace.BackHairLayer(size: Vector2, headBounds: Bounds, ha
 		Vector2.new(g.centerX, bottom - math.floor(g.height * 0.04)),
 		Vector2.new(g.centerX - math.floor(g.width * 0.25), bottom),
 		Vector2.new(g.centerX - math.floor(g.width * 0.34), bottom - math.floor(g.height * 0.18)),
+	}, 2)
+	local hairMask = Raster.UnionMasks(dome, bob, size)
+	polygon(layer, size, {
+		Vector2.new(headBounds.minX, headBounds.minY),
+		Vector2.new(headBounds.maxX, headBounds.minY),
+		Vector2.new(headBounds.maxX, headBounds.maxY),
+		Vector2.new(headBounds.minX, headBounds.maxY),
 	}, hairColors.primary)
+	layer = Raster.ClipToMask(layer, size, hairMask)
 	local shadowY = headBounds.minY + math.floor(g.height * 0.73)
 	Raster.DrawLine(
 		layer,
@@ -174,8 +190,8 @@ function ProceduralChibiFace.FacialFeaturesLayer(
 	local blush = Color3.fromRGB(238, 142, 157)
 	local mouth = Color3.fromRGB(137, 68, 91)
 	local eyeOffset = math.max(9, math.floor(g.width * 0.125))
-	local eyeRadiusX = math.max(4, math.floor(g.width * 0.058))
-	local eyeRadiusY = math.max(5, math.floor(g.height * 0.092))
+	local eyeRadiusX = math.max(5, math.floor(g.width * 0.066))
+	local eyeRadiusY = math.max(4, math.floor(g.height * 0.076))
 	local eyeY = g.faceTop + math.floor(g.height * 0.25)
 	for _, direction in { -1, 1 } do
 		local eyeX = g.centerX + eyeOffset * direction
@@ -184,8 +200,8 @@ function ProceduralChibiFace.FacialFeaturesLayer(
 		fillEllipse(layer, size, eyeX, eyeY + math.floor(eyeRadiusY * 0.5), eyeRadiusX - 1, 2, eyeShadow)
 		fillEllipse(layer, size, eyeX, eyeY + eyeRadiusY - 1, eyeRadiusX - 2, 1, eyeColor:Lerp(highlight, 0.48))
 		fillEllipse(layer, size, eyeX, eyeY + 1, math.max(1, eyeRadiusX - 2), math.max(2, eyeRadiusY - 2), eyeShadow)
+		-- At most two coherent highlights per eye.
 		writeColor(layer, size, eyeX - 2, eyeY - 2, highlight)
-		writeColor(layer, size, eyeX - 1, eyeY - 2, highlight)
 		writeColor(layer, size, eyeX + 2, eyeY + 1, highlight)
 		-- Thick upper lid, thinner lower lid and outward lashes.
 		Raster.DrawLine(layer, size, Vector2.new(eyeX - eyeRadiusX - 1, eyeY - eyeRadiusY), Vector2.new(eyeX + eyeRadiusX, eyeY - eyeRadiusY + 1), eyeOutline)
@@ -224,17 +240,44 @@ function ProceduralChibiFace.FrontHairLayer(size: Vector2, headBounds: Bounds, h
 	local fringeBottom = headBounds.minY + math.floor(g.height * 0.67)
 	local fringeLeft = g.centerX - math.floor(g.width * 0.25)
 	local fringeRight = g.centerX + math.floor(g.width * 0.25)
-	local strandWidth = math.max(4, math.floor((fringeRight - fringeLeft) / 6))
-	for strand = 0, 5 do
-		local left = fringeLeft + strand * strandWidth
-		local right = if strand == 5 then fringeRight else left + strandWidth + 1
-		local centerDistance = math.abs(strand - 2.5)
-		local tip = fringeBottom + math.floor((2.5 - centerDistance) * 3)
-		polygon(layer, size, {
-			Vector2.new(left, fringeTop + math.abs(strand - 3)),
-			Vector2.new(right, fringeTop),
-			Vector2.new(math.floor((left + right) / 2), tip),
-		}, if strand == 0 or strand == 5 then hairColors.shadow else hairColors.primary)
+	local fringeMask = buffer.create(buffer.len(layer))
+	local points = {
+		Vector2.new(fringeLeft, fringeTop + 3),
+		Vector2.new(fringeLeft + math.floor((fringeRight - fringeLeft) * 0.18), fringeTop),
+		Vector2.new(fringeRight - math.floor((fringeRight - fringeLeft) * 0.18), fringeTop),
+		Vector2.new(fringeRight, fringeTop + 3),
+	}
+	-- One continuous saw-tooth lower boundary: seven tips share the same
+	-- connected crown, so no transparent seams can split the fringe.
+	for tipIndex = 6, 0, -1 do
+		local centerDistance = math.abs(tipIndex - 3)
+		local tipX = fringeLeft + math.floor((fringeRight - fringeLeft) * (tipIndex + 0.5) / 7)
+		local valleyX = fringeLeft + math.floor((fringeRight - fringeLeft) * tipIndex / 7)
+		local tipY = fringeBottom + math.floor((3 - centerDistance) * 2)
+		table.insert(points, Vector2.new(valleyX, fringeTop + math.floor(g.height * 0.14)))
+		table.insert(points, Vector2.new(tipX, tipY))
+	end
+	Raster.FillRoundedPolygon(fringeMask, size, points, 1)
+	local red, green, blue = colorBytes(hairColors.primary)
+	local width = math.floor(size.X)
+	for y = 0, math.floor(size.Y) - 1 do
+		for x = 0, width - 1 do
+			if buffer.readu8(fringeMask, offset(width, x, y) + 3) > 0 then
+				Raster.SourceOverPixel(layer, width, math.floor(size.Y), x, y, {
+					r = red, g = green, b = blue, a = 255,
+				})
+			end
+		end
+	end
+	for strand = 1, 6 do
+		local x = fringeLeft + math.floor((fringeRight - fringeLeft) * strand / 7)
+		Raster.DrawLine(
+			layer,
+			size,
+			Vector2.new(x, fringeTop + 3),
+			Vector2.new(x + (if strand < 4 then -2 else 2), fringeBottom - 2),
+			if strand == 1 or strand == 6 then hairColors.shadow else hairColors.highlight:Lerp(hairColors.primary, 0.55)
+		)
 	end
 	local highlightY = headBounds.minY + math.floor(g.height * 0.24)
 	Raster.DrawLine(

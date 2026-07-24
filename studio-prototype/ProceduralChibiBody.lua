@@ -13,6 +13,13 @@ export type RegionMetrics = {
 	accentComponents: number,
 }
 
+export type BodyMetrics = {
+	lowerGarmentSkinRatio: number,
+	lowerGarmentCentralCoverage: number,
+	shoulderPixelsRepaired: number,
+	shoulderPixelsOverwritten: number,
+}
+
 local ProceduralChibiBody = {}
 
 local PART_ORDER = {
@@ -70,6 +77,14 @@ function ProceduralChibiBody.CreateMasks(size: Vector2): { [string]: buffer }
 	polygon(masks.skirt, size, {
 		47, 160, 81, 160, 87, 174, 92, 188, 71, 191, 64, 187,
 		57, 191, 36, 188, 41, 174,
+	})
+	masks.waistband = buffer.create(width * height * 4)
+	masks.upperPanels = buffer.create(width * height * 4)
+	masks.lowerRuffle = buffer.create(width * height * 4)
+	polygon(masks.waistband, size, { 47, 160, 81, 160, 83, 166, 45, 166 })
+	polygon(masks.upperPanels, size, { 45, 166, 83, 166, 87, 179, 41, 179 })
+	polygon(masks.lowerRuffle, size, {
+		41, 178, 87, 178, 92, 188, 71, 191, 64, 187, 57, 191, 36, 188,
 	})
 
 	polygon(masks.leftLeg, size, { 47, 185, 61, 185, 60, 233, 49, 233, 46, 211 })
@@ -138,6 +153,58 @@ local function fillMaskColorRange(
 			end
 		end
 	end
+end
+
+local function maskedSource(sourcePixels: buffer, sourceSize: Vector2, sourceMask: buffer): buffer
+	local result = buffer.create(buffer.len(sourcePixels))
+	local width = math.floor(sourceSize.X)
+	for y = 0, math.floor(sourceSize.Y) - 1 do
+		for x = 0, width - 1 do
+			local pixelOffset = offset(width, x, y)
+			if buffer.readu8(sourceMask, pixelOffset + 3) > 0 then
+				buffer.copy(result, pixelOffset, sourcePixels, pixelOffset, 4)
+			end
+		end
+	end
+	return result
+end
+
+local function repairShoulders(
+	target: buffer,
+	size: Vector2,
+	leftMask: buffer,
+	rightMask: buffer
+): (buffer, number, number)
+	local diagnostic = buffer.create(buffer.len(target))
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	local firstY = math.clamp(math.floor(107 * size.Y / 256 + 0.5), 0, height - 1)
+	local lastY = math.clamp(math.floor(132 * size.Y / 256 + 0.5), firstY, height - 1)
+	local searchLastY = math.clamp(math.floor(154 * size.Y / 256 + 0.5), lastY, height - 1)
+	local repaired = 0
+	local overwritten = 0
+	for _, mask in { leftMask, rightMask } do
+		for y = firstY, lastY do
+			for x = 0, width - 1 do
+				local pixelOffset = offset(width, x, y)
+				if buffer.readu8(mask, pixelOffset + 3) == 0 then continue end
+				-- Never replace valid projected texture. Only fill true holes
+				-- using the closest textured pixel in the same sleeve column.
+				if buffer.readu8(target, pixelOffset + 3) > 0 then continue end
+				for sampleY = y + 1, searchLastY do
+					local sampleOffset = offset(width, x, sampleY)
+					if buffer.readu8(mask, sampleOffset + 3) > 0
+						and buffer.readu8(target, sampleOffset + 3) > 0 then
+						buffer.copy(target, pixelOffset, target, sampleOffset, 4)
+						buffer.copy(diagnostic, pixelOffset, target, pixelOffset, 4)
+						repaired += 1
+						break
+					end
+				end
+			end
+		end
+	end
+	return diagnostic, repaired, overwritten
 end
 
 local function sampleVibrantMaskColor(
@@ -348,7 +415,9 @@ function ProceduralChibiBody.Paint(
 	buffer,
 	{ [string]: buffer },
 	{ Color3 },
-	{ [string]: RegionMetrics }
+	{ [string]: RegionMetrics },
+	BodyMetrics,
+	{ [string]: buffer }
 )
 	local masks = ProceduralChibiBody.CreateMasks(size)
 	local width = math.floor(size.X)
@@ -383,31 +452,8 @@ function ProceduralChibiBody.Paint(
 		analysis.rightSleeve,
 		analysis.rightSleeve.excludeSkin
 	)
-	local leftShoulderColor = sampleVibrantMaskColor(
-		projected, size, masks.leftArm, 133, 154, shoulderColor(analysis.leftSleeve)
-	)
-	local rightShoulderColor = sampleVibrantMaskColor(
-		projected, size, masks.rightArm, 133, 154, shoulderColor(analysis.rightSleeve)
-	)
-	-- HeadShot hair and the torso edge can contaminate the first sampled sleeve
-	-- rows. Stabilize only the small shoulder cap; the rest of each arm keeps
-	-- its projected stripes and recovered accents.
-	fillMaskColorRange(
-		projected,
-		size,
-		masks.leftArm,
-		leftShoulderColor,
-		107,
-		132
-	)
-	fillMaskColorRange(
-		projected,
-		size,
-		masks.rightArm,
-		rightShoulderColor,
-		107,
-		132
-	)
+	local shoulderRepair, shoulderPixelsRepaired, shoulderPixelsOverwritten =
+		repairShoulders(projected, size, masks.leftArm, masks.rightArm)
 	if analysis.midriffUsesSkin then
 		fillMaskColor(projected, size, masks.abdomen, bodyColors.torso)
 		metrics.midriff = {
@@ -419,8 +465,9 @@ function ProceduralChibiBody.Paint(
 	else
 		metrics.midriff = projectRegion(sourcePixels, sourceSize, projected, size, masks.abdomen, analysis.torso, true)
 	end
+	local garmentPixels = maskedSource(sourcePixels, sourceSize, analysis.lowerGarmentMask)
 	metrics.lowerGarment = projectRegion(
-		sourcePixels,
+		garmentPixels,
 		sourceSize,
 		projected,
 		size,
@@ -480,22 +527,6 @@ function ProceduralChibiBody.Paint(
 		projectAccents(sourcePixels, sourceSize, accented, size, masks.rightArm, analysis.rightSleeve)
 	metrics.lowerGarment.accentComponents =
 		projectAccents(sourcePixels, sourceSize, accented, size, masks.skirt, analysis.lowerGarment)
-	fillMaskColorRange(
-		accented,
-		size,
-		masks.leftArm,
-		leftShoulderColor,
-		107,
-		132
-	)
-	fillMaskColorRange(
-		accented,
-		size,
-		masks.rightArm,
-		rightShoulderColor,
-		107,
-		132
-	)
 
 	local finished = cloneBuffer(accented)
 	local bodyMask = unionMasks(masks, size)
@@ -533,7 +564,25 @@ function ProceduralChibiBody.Paint(
 		inkColor,
 		shadowColor,
 	}
-	return projected, accented, finished, masks, lockedColors, metrics
+	local skirtSourceDiagnostic = buffer.create(buffer.len(projected))
+	projectRegion(
+		garmentPixels,
+		sourceSize,
+		skirtSourceDiagnostic,
+		size,
+		masks.skirt,
+		analysis.lowerGarment,
+		false
+	)
+	return projected, accented, finished, masks, lockedColors, metrics, {
+		lowerGarmentSkinRatio = analysis.lowerGarmentSkinRatio,
+		lowerGarmentCentralCoverage = analysis.lowerGarmentCentralCoverage,
+		shoulderPixelsRepaired = shoulderPixelsRepaired,
+		shoulderPixelsOverwritten = shoulderPixelsOverwritten,
+	}, {
+		SkirtSourceMask = skirtSourceDiagnostic,
+		ShoulderRepair = shoulderRepair,
+	}
 end
 
 return table.freeze(ProceduralChibiBody)
