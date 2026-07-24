@@ -568,6 +568,35 @@ local function regenerateThumbnail()
 					renderMetrics.head.simplifiedFinalColors
 				))
 				print(string.format(
+					"[PixelAvatar] accessory completion core=%d clusters=%d support=%d skinLike=%d hairLike=%d rejectedLeak=%d linear=%d stacked=%d",
+					renderMetrics.head.rawCoreComponents,
+					renderMetrics.head.completedClusters,
+					renderMetrics.head.recoveredSupportPixels,
+					renderMetrics.head.recoveredSkinLikePixels,
+					renderMetrics.head.recoveredHairLikePixels,
+					renderMetrics.head.rejectedLeakPixels,
+					renderMetrics.head.linearAccessoryCount,
+					renderMetrics.head.stackedLinearAccessoryCount
+				))
+				print(string.format(
+					"[PixelAvatar] accessory final safeAdjustments=%d offCanvasPrevented=%d visible=%.3f/%.3f holes=%d->%d lostClip=%d finalAspect=%.3f/%.3f attachment=%.3f recovered=%d/%d/%d/%d rejected=%d",
+					renderMetrics.head.safeCanvasAdjustments,
+					renderMetrics.head.offCanvasPixelsPrevented,
+					renderMetrics.head.minimumVisibleRatio,
+					renderMetrics.head.averageVisibleRatio,
+					renderMetrics.head.preClipHoles,
+					renderMetrics.head.finalHoles,
+					renderMetrics.head.holesLostDuringClipping,
+					renderMetrics.head.averageFinalAspectError,
+					renderMetrics.head.maximumFinalAspectError,
+					renderMetrics.head.averageHairAttachmentRatio,
+					renderMetrics.head.recoveredByTranslation,
+					renderMetrics.head.recoveredByScaling,
+					renderMetrics.head.recoveredByTemplate,
+					renderMetrics.head.recoveredByFallback,
+					renderMetrics.head.rejectedAfterFinalValidation
+				))
+				print(string.format(
 					"[PixelAvatar] hair masses=%d highlight=%d shadow=%d secondary=%d strands=%d rawIsolatedHighlight=%d rawIsolatedSecondary=%d remainingHighlight=%d remainingSecondary=%d",
 					renderMetrics.head.hairMassCount,
 					renderMetrics.head.highlightMassCount,

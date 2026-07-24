@@ -12,6 +12,7 @@ export type HairMassDescriptor = {
 	side: "Left" | "Center" | "Right",
 	zone: "Crown" | "Side" | "Fringe" | "Tips" | "Bottom",
 	confidence: number,
+	orientation: number,
 }
 
 export type HairColors = {

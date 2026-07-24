@@ -110,6 +110,7 @@ ReplicatedStorage
     ├── ProceduralChibiFace
     ├── ProceduralChibiHeadAnalyzer
     ├── ProceduralChibiAccessory
+    ├── ProceduralChibiAccessoryCompletion
     ├── ProceduralChibiHead
     ├── ProceduralChibiSelfTest
     └── ProceduralChibiRenderer
@@ -245,6 +246,20 @@ Las métricas separan los conteos `ShapePreserving`, `TemplateAssisted` y
 `PrimitiveFallback`; también informan huecos preservados o perdidos, error
 medio de aspecto y colores fuente/finales. Los buffers de diagnóstico son
 resultados raster reales, no alias del compuesto final.
+
+La segmentación de accesorios usa ahora dos niveles. `AccessoryCoreSeeds`
+contiene únicamente semillas de alto contraste; `AccessorySupportMask`
+permite recuperar localmente bordes claros, sombras y colores parecidos a piel
+o cabello sin incorporar la cara ni la corona completa. Cada semilla crece
+dentro de una región limitada y produce `AccessoryCompletedClusters`.
+
+El layout clasifica la geometría como `PointedTop`, `SideShell`, `Linear`,
+`StackedLinear`, `Compact` o `Complex`. Antes de rasterizar, cada pieza pasa
+por `FitBoundsInsideSafeCanvas`: primero se traslada, después se reduce solo si
+es necesario y se rechaza si no puede conservarse. La validación final informa
+proporción visible, huecos posteriores, error de aspecto, unión con el cabello,
+solapamiento facial y píxeles fuera del lienzo. El contorno oscuro se añade
+fuera de la ocupación para conservar el borde cromático interior.
 
 El cuerpo también se interpreta mediante descriptores: las bandas de manga se
 pintan en el eje local hombro-puño, el torso usa una base limpia más uno o dos

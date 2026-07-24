@@ -44,6 +44,10 @@ const proceduralAccessory = fs.readFileSync(
   "studio-prototype/ProceduralChibiAccessory.lua",
   "utf8",
 );
+const proceduralAccessoryCompletion = fs.readFileSync(
+  "studio-prototype/ProceduralChibiAccessoryCompletion.lua",
+  "utf8",
+);
 const hairColorAnalyzer = fs.readFileSync(
   "studio-prototype/HairColorAnalyzer.lua",
   "utf8",
@@ -254,6 +258,13 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
     "AccessoryShapeOccupancy", "AccessoryContours", "AccessoryHoles",
     "AccessoryColorRoles", "AccessoryRenderModes", "AccessoryShapePreserving",
     "AccessoryTemplateAssisted", "AccessoryPrimitiveFallback", "AccessoryFinalLayout",
+    "AccessoryCoreSeeds", "AccessorySupportMask", "AccessoryCompletedClusters",
+    "AccessoryRecoveredSkinLike", "AccessoryRecoveredHairLike", "AccessoryClusterBounds",
+    "AccessoryGeometryKinds", "AccessoryLinearDescriptors", "AccessorySafeCanvas",
+    "AccessoryBoundsBeforeFit", "AccessoryBoundsAfterFit", "AccessoryHairAttachment",
+    "AccessoryProtectedFaceOverlap", "AccessoryBeforeFinalValidation",
+    "AccessoryAfterFinalValidation", "AccessoryPostClipHoles",
+    "AccessoryPostClipTopology", "TemplateAssistedLandmarks", "TemplateAssistedResult",
     "TorsoSourceAccents", "TorsoRetainedAccents", "GarmentSourceSubregions",
     "GarmentPanelDescriptors", "GarmentPanelsStructured", "BootSubparts",
     "AccentBudget", "RegionColorBudget", "FinalBeforePalette",
@@ -268,6 +279,12 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralAccessory, /holeMasks/);
   assert.match(proceduralAccessory, /bilateralSymmetry/);
   assert.match(proceduralAccessory, /contourComplexity/);
+  assert.match(proceduralAccessory, /FitBoundsInsideSafeCanvas/);
+  assert.match(proceduralAccessory, /templateOccupancy/);
+  assert.match(proceduralAccessory, /externalOutline/);
+  assert.match(proceduralAccessoryCompletion, /recoveredSkinLikePixels/);
+  assert.match(proceduralAccessoryCompletion, /rejectedLeakPixels/);
+  assert.match(proceduralAccessoryCompletion, /completedClusters/);
   assert.match(proceduralHead, /Accessory\.Describe/);
   assert.match(proceduralHead, /Accessory\.Render/);
   assert.match(proceduralChibi, /xpcall/);
@@ -335,6 +352,10 @@ test("procedural Luau self-test covers synthetic buffer behavior", () => {
   assert.match(proceduralSelfTest, /Accessory descriptor lost source holes/);
   assert.match(proceduralSelfTest, /Unstable accessory did not use primitive fallback/);
   assert.match(proceduralSelfTest, /Source panel descriptors did not drive skirt geometry/);
+  assert.match(proceduralSelfTest, /Skin-like accessory border was not recovered/);
+  assert.match(proceduralSelfTest, /ShapePreserving and TemplateAssisted produced identical buffers/);
+  assert.match(proceduralSelfTest, /Off-canvas accessory was not translated/);
+  assert.match(proceduralSelfTest, /Three parallel bars were not classified as StackedLinear/);
 });
 
 test("procedural head owns its alpha and keeps copied pixels debug-only", () => {

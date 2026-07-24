@@ -1,6 +1,7 @@
 --!strict
 
 local HairColorAnalyzer = require(script.Parent:WaitForChild("HairColorAnalyzer"))
+local AccessoryCompletion = require(script.Parent:WaitForChild("ProceduralChibiAccessoryCompletion"))
 local Raster = require(script.Parent:WaitForChild("ProceduralRaster"))
 
 type Bounds = Raster.Bounds
@@ -39,6 +40,11 @@ export type Analysis = {
 	candidateMask: buffer,
 	rawCandidateMask: buffer,
 	mergedCandidateMask: buffer,
+	supportMask: buffer,
+	completedClusterMask: buffer,
+	recoveredSkinLikeMask: buffer,
+	recoveredHairLikeMask: buffer,
+	clusterBoundsMask: buffer,
 	protectedFace: Bounds,
 	metrics: {
 		candidates: number,
@@ -55,6 +61,12 @@ export type Analysis = {
 		rejectedByFace: number,
 		rejectedAsDuplicate: number,
 		mergedPairs: number,
+		rawCoreComponents: number,
+		completedClusters: number,
+		recoveredSupportPixels: number,
+		recoveredSkinLikePixels: number,
+		recoveredHairLikePixels: number,
+		rejectedLeakPixels: number,
 	},
 }
 
@@ -201,65 +213,6 @@ function ProceduralChibiHeadAnalyzer.CanMergeComponents(
 	return true
 end
 
-local function mergeComponents(
-	components: { ConnectedComponent },
-	bounds: Bounds,
-	protectedFace: Bounds?
-): ({ ConnectedComponent }, number)
-	local groups: { { ConnectedComponent } } = {}
-	local mergeCount = 0
-	for _, component in components do
-		local destination: { ConnectedComponent }? = nil
-		for _, group in groups do
-			for _, member in group do
-				if ProceduralChibiHeadAnalyzer.CanMergeComponents(member, component, {
-					bounds = bounds,
-					protectedFace = protectedFace,
-				}) then
-					destination = group
-					break
-				end
-			end
-			if destination then break end
-		end
-		if destination then
-			table.insert(destination, component)
-			mergeCount += 1
-		else
-			table.insert(groups, { component })
-		end
-	end
-	local merged = {}
-	for _, group in groups do
-		local pixels = {}
-		local mergedBounds: Bounds = {
-			minX = group[1].bounds.minX, minY = group[1].bounds.minY,
-			maxX = group[1].bounds.maxX, maxY = group[1].bounds.maxY,
-		}
-		local sumX = 0
-		local sumY = 0
-		for _, component in group do
-			for _, pixel in component.pixels do
-				table.insert(pixels, pixel)
-				sumX += pixel.x
-				sumY += pixel.y
-			end
-			mergedBounds.minX = math.min(mergedBounds.minX, component.bounds.minX)
-			mergedBounds.minY = math.min(mergedBounds.minY, component.bounds.minY)
-			mergedBounds.maxX = math.max(mergedBounds.maxX, component.bounds.maxX)
-			mergedBounds.maxY = math.max(mergedBounds.maxY, component.bounds.maxY)
-		end
-		table.insert(merged, {
-			bounds = mergedBounds,
-			area = #pixels,
-			centroid = Vector2.new(sumX / math.max(1, #pixels), sumY / math.max(1, #pixels)),
-			pixels = pixels,
-		})
-	end
-	table.sort(merged, function(left, right) return left.area > right.area end)
-	return merged, mergeCount
-end
-
 local function componentMask(components: { ConnectedComponent }, size: Vector2): buffer
 	local width = math.floor(size.X)
 	local mask = buffer.create(width * math.floor(size.Y) * 4)
@@ -377,7 +330,20 @@ function ProceduralChibiHeadAnalyzer.Analyze(
 	-- a chance to distinguish them.
 	local rawComponents = Raster.ConnectedComponents(rawCandidateMask, size, pixels, 1, 8)
 	local sourceArea = boundsWidth * boundsHeight
-	local mergedComponents, mergedPairs = mergeComponents(rawComponents, bounds, protectedFace)
+	local completion = AccessoryCompletion.Complete(
+		pixels,
+		size,
+		bounds,
+		protectedFace,
+		rawCandidateMask,
+		hair.hairCoreMask,
+		skinColor,
+		{ hair.primary, hair.secondary, hair.highlight, hair.shadow },
+		threshold
+	)
+	local mergedComponents = {}
+	for _, cluster in completion.clusters do table.insert(mergedComponents, cluster.completedComponent) end
+	local mergedPairs = 0
 	local mergedCandidateMask = componentMask(mergedComponents, size)
 	local accepted: { AccessoryCandidate } = {}
 	local rejectedFace = 0
@@ -470,6 +436,11 @@ function ProceduralChibiHeadAnalyzer.Analyze(
 		candidateMask = mergedCandidateMask,
 		rawCandidateMask = rawCandidateMask,
 		mergedCandidateMask = mergedCandidateMask,
+		supportMask = completion.supportMask,
+		completedClusterMask = completion.completedMask,
+		recoveredSkinLikeMask = completion.recoveredSkinLikeMask,
+		recoveredHairLikeMask = completion.recoveredHairLikeMask,
+		clusterBoundsMask = completion.clusterBoundsMask,
 		protectedFace = protectedFace,
 		metrics = {
 			candidates = #rawComponents,
@@ -486,6 +457,12 @@ function ProceduralChibiHeadAnalyzer.Analyze(
 			rejectedByFace = rejectedFace,
 			rejectedAsDuplicate = rejectedAsDuplicate,
 			mergedPairs = mergedPairs,
+			rawCoreComponents = completion.rawCoreComponents,
+			completedClusters = completion.completedClusters,
+			recoveredSupportPixels = completion.recoveredSupportPixels,
+			recoveredSkinLikePixels = completion.recoveredSkinLikePixels,
+			recoveredHairLikePixels = completion.recoveredHairLikePixels,
+			rejectedLeakPixels = completion.rejectedLeakPixels,
 		},
 	}
 end

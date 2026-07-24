@@ -2,6 +2,7 @@
 
 local Body = require(script.Parent:WaitForChild("ProceduralChibiBody"))
 local Accessory = require(script.Parent:WaitForChild("ProceduralChibiAccessory"))
+local AccessoryCompletion = require(script.Parent:WaitForChild("ProceduralChibiAccessoryCompletion"))
 local Face = require(script.Parent:WaitForChild("ProceduralChibiFace"))
 local Finalizer = require(script.Parent:WaitForChild("ProceduralImageFinalizer"))
 local Head = require(script.Parent:WaitForChild("ProceduralChibiHead"))
@@ -51,6 +52,14 @@ local function countOpaque(pixels: buffer, size: Vector2): number
 		end
 	end
 	return count
+end
+
+local function buffersDiffer(left: buffer, right: buffer): boolean
+	if buffer.len(left) ~= buffer.len(right) then return true end
+	for index = 0, buffer.len(left) - 1 do
+		if buffer.readu8(left, index) ~= buffer.readu8(right, index) then return true end
+	end
+	return false
 end
 
 local function countNearColor(
@@ -334,6 +343,83 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 			== "PrimitiveFallback",
 		"Unstable accessory did not use primitive fallback"
 	)
+	local templateCandidate = table.clone(accessoryCandidate)
+	templateCandidate.zone = "topLeft"
+	templateCandidate.anchor = "topLeft"
+	templateCandidate.pairId = 1
+	local templateDescriptor = Accessory.Describe(
+		templateCandidate,
+		{ minX = 0, minY = 0, maxX = 31, maxY = 31 }
+	)
+	local templateResult = Accessory.Render(
+		templateDescriptor,
+		Vector2.new(64, 64),
+		{ minX = 8, minY = 10, maxX = 43, maxY = 37 }
+	)
+	assert(templateDescriptor.renderMode == "TemplateAssisted", "Paired structural accessory did not use template")
+	assert(buffersDiffer(accessoryResult.pixels, templateResult.pixels), "ShapePreserving and TemplateAssisted produced identical buffers")
+	assert(countOpaque(templateResult.templateLandmarks, Vector2.new(64, 64)) > 0, "Template landmarks are empty")
+	local safe = Accessory.CreateSafeCanvas(Vector2.new(128, 256), { minX = 12, minY = 3, maxX = 116, maxY = 108 })
+	local fitted = Accessory.FitBoundsInsideSafeCanvas(
+		{ minX = -24, minY = -8, maxX = 31, maxY = 18 },
+		safe
+	)
+	assert(fitted.translatedPixels > 0, "Off-canvas accessory was not translated")
+	assert(fitted.fittedBounds.minX >= safe.bounds.minX and fitted.fittedBounds.minY >= safe.bounds.minY, "Safe canvas fit still starts outside")
+	assert(fitted.fittedBounds.maxX <= safe.bounds.maxX and fitted.fittedBounds.maxY <= safe.bounds.maxY, "Safe canvas fit still ends outside")
+	local barPixels = {}
+	for bar = 0, 2 do
+		for y = 0, 1 do
+			for x = 1, 20 do
+				table.insert(barPixels, {
+					x = x, y = 2 + bar * 4 + y,
+					r = 70 + bar * 70, g = 90, b = 220 - bar * 55, a = 255,
+				})
+			end
+		end
+	end
+	local barsDescriptor = Accessory.Describe({
+		bounds = { minX = 1, minY = 2, maxX = 20, maxY = 11 },
+		area = #barPixels,
+		centroid = Vector2.new(10.5, 6.5),
+		zone = "frontLeft",
+		kind = "Clip",
+		pairId = nil,
+		confidence = 0.9,
+		colors = {},
+		component = {
+			bounds = { minX = 1, minY = 2, maxX = 20, maxY = 11 },
+			area = #barPixels,
+			centroid = Vector2.new(10.5, 6.5),
+			pixels = barPixels,
+		},
+	}, { minX = 0, minY = 0, maxX = 63, maxY = 63 })
+	assert(barsDescriptor.geometryKind == "StackedLinear", "Three parallel bars were not classified as StackedLinear")
+	assert(barsDescriptor.linear and barsDescriptor.linear.lineCount >= 3, "StackedLinear descriptor lost its bar count")
+
+	local completionSize = Vector2.new(32, 32)
+	local completionPixels = buffer.create(32 * 32 * 4)
+	local completionCore = buffer.create(buffer.len(completionPixels))
+	local emptyHair = buffer.create(buffer.len(completionPixels))
+	fillRect(completionPixels, 32, 10, 12, 21, 25, Color3.fromRGB(236, 184, 158))
+	fillRect(completionPixels, 32, 2, 1, 9, 9, Color3.fromRGB(232, 184, 156))
+	fillRect(completionPixels, 32, 4, 3, 7, 8, Color3.fromRGB(126, 65, 205))
+	for y = 3, 8 do for x = 4, 7 do buffer.writeu8(completionCore, offset(32, x, y) + 3, 255) end end
+	local completion = AccessoryCompletion.Complete(
+		completionPixels,
+		completionSize,
+		{ minX = 0, minY = 0, maxX = 31, maxY = 31 },
+		{ minX = 9, minY = 10, maxX = 22, maxY = 26 },
+		completionCore,
+		emptyHair,
+		Color3.fromRGB(236, 184, 158),
+		{ Color3.fromRGB(50, 180, 70) },
+		48
+	)
+	assert(completion.completedClusters == 1, "Accessory core did not produce one completed cluster")
+	assert(completion.recoveredSkinLikePixels > 0, "Skin-like accessory border was not recovered")
+	assert(completion.recoveredSupportPixels > completion.recoveredSkinLikePixels - 1, "Support accounting is inconsistent")
+	assert(Raster.CountMaskPixels(completion.completedMask, completionSize) < 100, "Accessory completion leaked into the face")
 
 	local source = { minX = 12, minY = 20, maxX = 91, maxY = 219 }
 	local bands = Raster.MakeBodyBands(source)
@@ -388,6 +474,7 @@ function ProceduralChibiSelfTest.Run(): { [string]: any }
 	assert(bodyMetrics.rightBootFallbackRatio <= 0.2 or bodyMetrics.bootPairRecoveryUsed, "Right boot was not structurally recovered")
 	assert(countColorsInRows(projected, bodySize, masks.leftArm, 107, 154) >= 3, "Left shoulder was flattened")
 	assert(countColorsInRows(projected, bodySize, masks.rightArm, 107, 154) >= 3, "Right shoulder was flattened")
+	assert(countOpaque(painted, bodySize) > 7000, "Body visual regression removed canonical anatomy")
 
 	for y = 0, 255 do
 		for x = 0, 127 do

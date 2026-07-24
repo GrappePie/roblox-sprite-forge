@@ -37,6 +37,7 @@ export type HairMassDescriptor = {
 	side: "Left" | "Center" | "Right",
 	zone: "Crown" | "Fringe" | "Side" | "Tips" | "Bottom",
 	confidence: number,
+	orientation: number,
 }
 
 type Bucket = {
@@ -261,6 +262,11 @@ local function buildMassDescriptors(
 				elseif v > 0.64 then "Tips"
 				elseif u < 0.25 or u > 0.75 then "Side"
 				else "Fringe"
+			local xx, yy, xy = 0, 0, 0
+			for _, pixel in component.pixels do
+				local dx, dy = pixel.x - component.centroid.X, pixel.y - component.centroid.Y
+				xx += dx * dx; yy += dy * dy; xy += dx * dy
+			end
 			table.insert(descriptors, {
 				label = names[labelIndex],
 				coverage = component.area / math.max(1, boundsWidth * boundsHeight),
@@ -274,6 +280,7 @@ local function buildMassDescriptors(
 				side = if u < 0.4 then "Left" elseif u > 0.6 then "Right" else "Center",
 				zone = zone,
 				confidence = math.clamp(component.area / math.max(3, boundsWidth * boundsHeight * 0.02), 0, 1),
+				orientation = 0.5 * math.atan2(2 * xy, xx - yy),
 			})
 		end
 	end

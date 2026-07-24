@@ -57,6 +57,25 @@ export type DebugStage =
 	| "AccessoryTemplateAssisted"
 	| "AccessoryPrimitiveFallback"
 	| "AccessoryFinalLayout"
+	| "AccessoryCoreSeeds"
+	| "AccessorySupportMask"
+	| "AccessoryCompletedClusters"
+	| "AccessoryRecoveredSkinLike"
+	| "AccessoryRecoveredHairLike"
+	| "AccessoryClusterBounds"
+	| "AccessoryGeometryKinds"
+	| "AccessoryLinearDescriptors"
+	| "AccessorySafeCanvas"
+	| "AccessoryBoundsBeforeFit"
+	| "AccessoryBoundsAfterFit"
+	| "AccessoryHairAttachment"
+	| "AccessoryProtectedFaceOverlap"
+	| "AccessoryBeforeFinalValidation"
+	| "AccessoryAfterFinalValidation"
+	| "AccessoryPostClipHoles"
+	| "AccessoryPostClipTopology"
+	| "TemplateAssistedLandmarks"
+	| "TemplateAssistedResult"
 	| "AccessoryBackLayer"
 	| "AccessorySideLayer"
 	| "AccessoryFrontLayer"
@@ -175,6 +194,25 @@ local VALID_STAGES: { [string]: boolean } = {
 	AccessoryTemplateAssisted = true,
 	AccessoryPrimitiveFallback = true,
 	AccessoryFinalLayout = true,
+	AccessoryCoreSeeds = true,
+	AccessorySupportMask = true,
+	AccessoryCompletedClusters = true,
+	AccessoryRecoveredSkinLike = true,
+	AccessoryRecoveredHairLike = true,
+	AccessoryClusterBounds = true,
+	AccessoryGeometryKinds = true,
+	AccessoryLinearDescriptors = true,
+	AccessorySafeCanvas = true,
+	AccessoryBoundsBeforeFit = true,
+	AccessoryBoundsAfterFit = true,
+	AccessoryHairAttachment = true,
+	AccessoryProtectedFaceOverlap = true,
+	AccessoryBeforeFinalValidation = true,
+	AccessoryAfterFinalValidation = true,
+	AccessoryPostClipHoles = true,
+	AccessoryPostClipTopology = true,
+	TemplateAssistedLandmarks = true,
+	TemplateAssistedResult = true,
 	AccessoryBackLayer = true,
 	AccessorySideLayer = true,
 	AccessoryFrontLayer = true,
@@ -695,6 +733,44 @@ function ProceduralChibiRenderer.Create(
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryPrimitiveFallback, outputSize)
 			elseif stage == "AccessoryFinalLayout" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryFinalLayout, outputSize)
+			elseif stage == "AccessoryCoreSeeds" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCoreSeeds, outputSize)
+			elseif stage == "AccessorySupportMask" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessorySupportMask, outputSize)
+			elseif stage == "AccessoryCompletedClusters" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryCompletedClusters, outputSize)
+			elseif stage == "AccessoryRecoveredSkinLike" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryRecoveredSkinLike, outputSize)
+			elseif stage == "AccessoryRecoveredHairLike" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryRecoveredHairLike, outputSize)
+			elseif stage == "AccessoryClusterBounds" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryClusterBounds, outputSize)
+			elseif stage == "AccessoryGeometryKinds" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryGeometryKinds, outputSize)
+			elseif stage == "AccessoryLinearDescriptors" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryLinearDescriptors, outputSize)
+			elseif stage == "AccessorySafeCanvas" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessorySafeCanvas, outputSize)
+			elseif stage == "AccessoryBoundsBeforeFit" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryBoundsBeforeFit, outputSize)
+			elseif stage == "AccessoryBoundsAfterFit" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryBoundsAfterFit, outputSize)
+			elseif stage == "AccessoryHairAttachment" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryHairAttachment, outputSize)
+			elseif stage == "AccessoryProtectedFaceOverlap" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryProtectedFaceOverlap, outputSize)
+			elseif stage == "AccessoryBeforeFinalValidation" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryBeforeFinalValidation, outputSize)
+			elseif stage == "AccessoryAfterFinalValidation" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryAfterFinalValidation, outputSize)
+			elseif stage == "AccessoryPostClipHoles" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryPostClipHoles, outputSize)
+			elseif stage == "AccessoryPostClipTopology" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.accessoryPostClipTopology, outputSize)
+			elseif stage == "TemplateAssistedLandmarks" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.templateAssistedLandmarks, outputSize)
+			elseif stage == "TemplateAssistedResult" then
+				Raster.CompositeBufferSourceOver(outputPixels, headResult.templateAssistedResult, outputSize)
 			elseif stage == "AccessoryBackLayer" then
 				Raster.CompositeBufferSourceOver(outputPixels, headResult.backAccessories, outputSize)
 			elseif stage == "AccessorySideLayer" then

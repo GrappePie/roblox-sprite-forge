@@ -6,6 +6,26 @@ type Bounds = Raster.Bounds
 type Pixel = Raster.ComponentPixel
 
 export type AccessoryRenderMode = "ShapePreserving" | "TemplateAssisted" | "PrimitiveFallback"
+export type AccessoryGeometryKind = "PointedTop" | "SideShell" | "Linear" | "StackedLinear" | "Compact" | "Complex"
+export type LinearDescriptor = {
+	orientation: number,
+	lengthRatio: number,
+	thicknessRatio: number,
+	lineCount: number,
+	lineSpacing: number,
+}
+export type AccessorySafeCanvas = {
+	bounds: Bounds,
+	topOverflow: number,
+	sideOverflow: number,
+}
+export type FitResult = {
+	originalBounds: Bounds,
+	fittedBounds: Bounds,
+	translatedPixels: number,
+	scaleReduction: number,
+	offCanvasPixelsPrevented: number,
+}
 
 export type ColorRegion = {
 	mask: buffer,
@@ -41,6 +61,8 @@ export type AccessoryShapeDescriptor = {
 	colorRegions: { ColorRegion },
 	confidence: number,
 	sourceColorCount: number,
+	geometryKind: AccessoryGeometryKind,
+	linear: LinearDescriptor?,
 }
 
 export type RenderResult = {
@@ -56,6 +78,10 @@ export type RenderResult = {
 	preservedHoles: number,
 	lostHoles: number,
 	aspectError: number,
+	outlineCoverageRatio: number,
+	templateLandmarks: buffer,
+	templateResult: buffer,
+	geometryKind: AccessoryGeometryKind,
 }
 
 type Candidate = {
@@ -306,7 +332,17 @@ local function colorAnalysis(
 			local sumX, sumY, count = 0, 0, 0
 			for key, cellPixels in samples do
 				local bestDistance = math.huge
-				local average = Color3.fromRGB(cellPixels[1].r, cellPixels[1].g, cellPixels[1].b)
+				local red, green, blue, alpha = 0, 0, 0, 0
+				for _, pixel in cellPixels do
+					local weight = pixel.a / 255
+					red += pixel.r * weight; green += pixel.g * weight; blue += pixel.b * weight
+					alpha += weight
+				end
+				local average = Color3.fromRGB(
+					math.round(red / math.max(0.001, alpha)),
+					math.round(green / math.max(0.001, alpha)),
+					math.round(blue / math.max(0.001, alpha))
+				)
 				for _, candidateBucket in buckets do
 					local distance = colorDistance(average, colorFromBucket(candidateBucket))
 					if distance < bestDistance then bestDistance = distance end
@@ -377,10 +413,43 @@ function ProceduralChibiAccessory.Describe(candidate: Candidate, sourceBounds: B
 	local renderMode: AccessoryRenderMode = if not stable then "PrimitiveFallback"
 		elseif pairedStructural then "TemplateAssisted"
 		else "ShapePreserving"
+	local aspect = sourceWidth / sourceHeight
+	local occupancyComponents = Raster.ConnectedComponents(
+		occupancy, Vector2.new(gridSize, gridSize), nil, 2, 8
+	)
+	local rowGroups, inRowGroup = 0, false
+	for y = 0, gridSize - 1 do
+		local occupiedRow = false
+		for x = 0, gridSize - 1 do
+			if maskAt(occupancy, gridSize, gridSize, x, y) then occupiedRow = true; break end
+		end
+		if occupiedRow and not inRowGroup then rowGroups += 1 end
+		inRowGroup = occupiedRow
+	end
+	local geometryKind: AccessoryGeometryKind = if ((#occupancyComponents >= 2 or rowGroups >= 2) and aspect >= 1.7)
+		then "StackedLinear"
+		elseif aspect >= 2.15 or aspect <= 0.34 then "Linear"
+		elseif string.find(candidate.zone, "top", 1, true) then "PointedTop"
+		elseif string.find(candidate.zone, "side", 1, true) then "SideShell"
+		elseif #holes > 0 or contourPixels / math.max(1, occupied) > 0.72 then "Complex"
+		else "Compact"
+	local linear: LinearDescriptor? = nil
+	if geometryKind == "Linear" or geometryKind == "StackedLinear" then
+		local lineCount = math.clamp(#occupancyComponents, 1, 5)
+		linear = {
+			orientation = 0.5 * math.atan2(2 * xy, xx - yy),
+			lengthRatio = math.clamp(math.max(sourceWidth, sourceHeight)
+				/ math.max(1, sourceBounds.maxX - sourceBounds.minX + 1), 0.08, 0.32),
+			thicknessRatio = math.clamp(math.min(sourceWidth, sourceHeight)
+				/ math.max(1, math.max(sourceWidth, sourceHeight)), 0.025, 0.22),
+			lineCount = lineCount,
+			lineSpacing = if lineCount > 1 then math.max(1, math.min(sourceWidth, sourceHeight) / lineCount) else 0,
+		}
+	end
 	return {
 		renderMode = renderMode,
 		sourceBounds = candidate.bounds,
-		sourceAspect = sourceWidth / sourceHeight,
+		sourceAspect = aspect,
 		sourceArea = candidate.area,
 		relativeArea = candidate.area / math.max(1,
 			(sourceBounds.maxX - sourceBounds.minX + 1) * (sourceBounds.maxY - sourceBounds.minY + 1)),
@@ -397,7 +466,92 @@ function ProceduralChibiAccessory.Describe(candidate: Candidate, sourceBounds: B
 		colorRegions = regions,
 		confidence = confidence,
 		sourceColorCount = sourceColorCount,
+		geometryKind = geometryKind,
+		linear = linear,
 	}
+end
+
+function ProceduralChibiAccessory.CreateSafeCanvas(size: Vector2, headBounds: Bounds): AccessorySafeCanvas
+	local margin = math.max(3, math.floor(math.min(size.X, size.Y) * 0.018))
+	return {
+		bounds = {
+			minX = margin,
+			minY = margin,
+			maxX = math.floor(size.X) - margin - 1,
+			maxY = math.min(math.floor(size.Y) - margin - 1, headBounds.maxY + math.floor((headBounds.maxY - headBounds.minY + 1) * 0.18)),
+		},
+		topOverflow = math.max(0, headBounds.minY - margin),
+		sideOverflow = math.max(0, math.floor((headBounds.maxX - headBounds.minX + 1) * 0.16)),
+	}
+end
+
+function ProceduralChibiAccessory.FitBoundsInsideSafeCanvas(
+	bounds: Bounds,
+	safeCanvas: AccessorySafeCanvas
+): FitResult
+	local safe = safeCanvas.bounds
+	local originalWidth, originalHeight = bounds.maxX - bounds.minX + 1, bounds.maxY - bounds.minY + 1
+	local scale = math.min(1, (safe.maxX - safe.minX + 1) / originalWidth, (safe.maxY - safe.minY + 1) / originalHeight)
+	local width, height = math.max(2, math.floor(originalWidth * scale + 0.5)), math.max(2, math.floor(originalHeight * scale + 0.5))
+	local centerX, centerY = (bounds.minX + bounds.maxX) * 0.5, (bounds.minY + bounds.maxY) * 0.5
+	local fitted: Bounds = {
+		minX = math.floor(centerX - width * 0.5 + 0.5),
+		minY = math.floor(centerY - height * 0.5 + 0.5),
+		maxX = 0, maxY = 0,
+	}
+	fitted.maxX, fitted.maxY = fitted.minX + width - 1, fitted.minY + height - 1
+	local dx = if fitted.minX < safe.minX then safe.minX - fitted.minX
+		elseif fitted.maxX > safe.maxX then safe.maxX - fitted.maxX else 0
+	local dy = if fitted.minY < safe.minY then safe.minY - fitted.minY
+		elseif fitted.maxY > safe.maxY then safe.maxY - fitted.maxY else 0
+	fitted = { minX = fitted.minX + dx, maxX = fitted.maxX + dx, minY = fitted.minY + dy, maxY = fitted.maxY + dy }
+	local outsideX = math.max(0, safe.minX - bounds.minX) + math.max(0, bounds.maxX - safe.maxX)
+	local outsideY = math.max(0, safe.minY - bounds.minY) + math.max(0, bounds.maxY - safe.maxY)
+	return {
+		originalBounds = bounds,
+		fittedBounds = fitted,
+		translatedPixels = math.abs(dx) + math.abs(dy),
+		scaleReduction = 1 - scale,
+		offCanvasPixelsPrevented = outsideX * originalHeight + outsideY * originalWidth,
+	}
+end
+
+local function templateOccupancy(descriptor: AccessoryShapeDescriptor): (buffer, buffer)
+	local gridSize = math.floor(descriptor.occupancySize.X)
+	local result = buffer.create(buffer.len(descriptor.occupancy))
+	buffer.copy(result, 0, descriptor.occupancy, 0, buffer.len(descriptor.occupancy))
+	local landmarks = buffer.create(buffer.len(result))
+	if descriptor.geometryKind == "PointedTop" then
+		local bounds = Raster.MaskBounds(result, descriptor.occupancySize)
+		if bounds then
+			local apexX = math.floor((bounds.minX + bounds.maxX) * 0.5)
+			for x = bounds.minX, bounds.maxX do
+				if math.abs(x - apexX) > 1 then
+					buffer.writeu8(result, offset(gridSize, x, bounds.minY) + 3, 0)
+				end
+			end
+			for x = bounds.minX, bounds.maxX do setMask(result, gridSize, x, bounds.maxY) end
+			setMask(landmarks, gridSize, apexX, bounds.minY)
+			setMask(landmarks, gridSize, bounds.minX, bounds.maxY)
+			setMask(landmarks, gridSize, bounds.maxX, bounds.maxY)
+		end
+	elseif descriptor.geometryKind == "SideShell" then
+		result = Raster.CardinalDilate(result, descriptor.occupancySize, 1)
+		result = Raster.CardinalErode(result, descriptor.occupancySize, 1)
+		local bounds = Raster.MaskBounds(result, descriptor.occupancySize)
+		if bounds then
+			local innerX = if bounds.minX < gridSize * 0.5 then bounds.maxX else bounds.minX
+			for y = bounds.minY, bounds.maxY do setMask(landmarks, gridSize, innerX, y) end
+		end
+	elseif descriptor.linear then
+		local bounds = Raster.MaskBounds(result, descriptor.occupancySize)
+		if bounds then
+			local centerY = math.floor((bounds.minY + bounds.maxY) * 0.5)
+			for x = bounds.minX, bounds.maxX do setMask(landmarks, gridSize, x, centerY) end
+		end
+	end
+	for _, hole in descriptor.holes do result = Raster.SubtractMask(result, hole, descriptor.occupancySize) end
+	return result, landmarks
 end
 
 local function paintCell(
@@ -458,13 +612,20 @@ function ProceduralChibiAccessory.Render(
 	local holesDiagnostic = buffer.create(buffer.len(pixels))
 	local rolesDiagnostic = buffer.create(buffer.len(pixels))
 	local modeDiagnostic = buffer.create(buffer.len(pixels))
+	local templateLandmarks = buffer.create(buffer.len(pixels))
+	local templateResult = buffer.create(buffer.len(pixels))
 	local gridSize = math.floor(descriptor.occupancySize.X)
+	local renderOccupancy = descriptor.occupancy
+	local landmarkGrid = buffer.create(buffer.len(descriptor.occupancy))
+	if descriptor.renderMode == "TemplateAssisted" then
+		renderOccupancy, landmarkGrid = templateOccupancy(descriptor)
+	end
 	if descriptor.renderMode == "PrimitiveFallback" then
 		renderPrimitive(descriptor, pixels, size, bounds)
 	else
 		for y = 0, gridSize - 1 do
 			for x = 0, gridSize - 1 do
-				if not maskAt(descriptor.occupancy, gridSize, gridSize, x, y) then continue end
+				if not maskAt(renderOccupancy, gridSize, gridSize, x, y) then continue end
 				local color = descriptor.colorRoles.dominant
 				for _, region in descriptor.colorRegions do
 					if buffer.readu8(region.mask, offset(gridSize, x, y) + 3) > 0 then
@@ -472,10 +633,7 @@ function ProceduralChibiAccessory.Render(
 						break
 					end
 				end
-				if buffer.readu8(descriptor.contour, offset(gridSize, x, y) + 3) > 0 then
-					color = descriptor.colorRoles.outline
-					paintCell(frontDetails, size, bounds, gridSize, x, y, color)
-				elseif colorDistance(color, descriptor.colorRoles.dominant) >= 0.07 then
+				if colorDistance(color, descriptor.colorRoles.dominant) >= 0.07 then
 					paintCell(frontDetails, size, bounds, gridSize, x, y, color)
 				end
 				paintCell(pixels, size, bounds, gridSize, x, y, color)
@@ -484,9 +642,45 @@ function ProceduralChibiAccessory.Render(
 					paintCell(contourDiagnostic, size, bounds, gridSize, x, y, Color3.fromRGB(255, 196, 52))
 				end
 				paintCell(rolesDiagnostic, size, bounds, gridSize, x, y, color)
+				if buffer.readu8(landmarkGrid, offset(gridSize, x, y) + 3) > 0 then
+					paintCell(templateLandmarks, size, bounds, gridSize, x, y, Color3.fromRGB(255, 76, 196))
+				end
 			end
 		end
 	end
+	if descriptor.renderMode == "TemplateAssisted" then
+		buffer.copy(templateResult, 0, pixels, 0, buffer.len(pixels))
+	end
+	-- Preserve the chromatic edge inside the occupancy and add ink outside it.
+	local width, height = math.floor(size.X), math.floor(size.Y)
+	local paintedMask = buffer.create(buffer.len(pixels))
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			if buffer.readu8(pixels, offset(width, x, y) + 3) > 0 then
+				buffer.writeu8(paintedMask, offset(width, x, y) + 3, 255)
+			end
+		end
+	end
+	local externalOutline = Raster.SubtractMask(
+		Raster.CardinalDilate(paintedMask, size, 1),
+		paintedMask,
+		size
+	)
+	local outlinedPixels = buffer.create(buffer.len(pixels))
+	local outlineRed = math.round(descriptor.colorRoles.outline.R * 255)
+	local outlineGreen = math.round(descriptor.colorRoles.outline.G * 255)
+	local outlineBlue = math.round(descriptor.colorRoles.outline.B * 255)
+	for y = 0, height - 1 do
+		for x = 0, width - 1 do
+			if buffer.readu8(externalOutline, offset(width, x, y) + 3) > 0 then
+				Raster.SourceOverPixel(outlinedPixels, width, height, x, y, {
+					r = outlineRed, g = outlineGreen, b = outlineBlue, a = 255,
+				})
+			end
+		end
+	end
+	Raster.CompositeBufferSourceOver(outlinedPixels, pixels, size)
+	pixels = outlinedPixels
 	for _, hole in descriptor.holes do
 		for y = 0, gridSize - 1 do
 			for x = 0, gridSize - 1 do
@@ -508,7 +702,6 @@ function ProceduralChibiAccessory.Render(
 	end
 	local renderedAspect = (bounds.maxX - bounds.minX + 1) / math.max(1, bounds.maxY - bounds.minY + 1)
 	local renderedOccupancy = buffer.create(gridSize * gridSize * 4)
-	local width, height = math.floor(size.X), math.floor(size.Y)
 	local targetWidth = math.max(1, bounds.maxX - bounds.minX + 1)
 	local targetHeight = math.max(1, bounds.maxY - bounds.minY + 1)
 	local renderedColors: { [number]: boolean } = {}
@@ -543,6 +736,8 @@ function ProceduralChibiAccessory.Render(
 	local renderedHoleCount = #holeMasks(renderedOccupancy, gridSize)
 	local finalColorCount = 0
 	for _ in renderedColors do finalColorCount += 1 end
+	local contentPixels = Raster.CountMaskPixels(paintedMask, size)
+	local outlinePixels = Raster.CountMaskPixels(externalOutline, size)
 	return {
 		pixels = pixels,
 		frontDetails = frontDetails,
@@ -556,6 +751,10 @@ function ProceduralChibiAccessory.Render(
 		preservedHoles = math.min(descriptor.holeCount, renderedHoleCount),
 		lostHoles = math.max(0, descriptor.holeCount - renderedHoleCount),
 		aspectError = math.abs(renderedAspect - descriptor.sourceAspect) / math.max(0.001, descriptor.sourceAspect),
+		outlineCoverageRatio = outlinePixels / math.max(1, contentPixels + outlinePixels),
+		templateLandmarks = templateLandmarks,
+		templateResult = templateResult,
+		geometryKind = descriptor.geometryKind,
 	}
 end
 
