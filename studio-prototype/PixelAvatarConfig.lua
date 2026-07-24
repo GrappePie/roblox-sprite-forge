@@ -32,6 +32,8 @@ return table.freeze({
 	ProceduralChibiHeadFallbackEnabled = true,
 	ProceduralChibiDebugStage = "Final",
 	ProceduralChibiRunSelfTest = true,
+	LayeredSpriteCanvasSize = Vector2.new(64, 96),
+	LayeredMockDelaySeconds = 8.5,
 	ProceduralChibiDebugStages = table.freeze({
 		"SourceBody",
 		"SourceRegions",
@@ -133,7 +135,7 @@ return table.freeze({
 		"Final",
 	}),
 
-	DefaultMode = "ProceduralChibi",
+	DefaultMode = "Layered",
 	Resolutions = table.freeze({
 		Vector2.new(32, 32),
 		Vector2.new(48, 48),

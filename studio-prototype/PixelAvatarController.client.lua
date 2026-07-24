@@ -9,10 +9,16 @@ local packageFolder = ReplicatedStorage:WaitForChild("PixelAvatar")
 local Config = require(packageFolder:WaitForChild("PixelAvatarConfig"))
 local Utils = require(packageFolder:WaitForChild("PixelAvatarUtils"))
 local ThumbnailPixelator = require(packageFolder:WaitForChild("ThumbnailPixelator"))
-local ProceduralChibiRenderer = require(packageFolder:WaitForChild("ProceduralChibiRenderer"))
+local ProceduralFallbackRenderer = require(packageFolder:WaitForChild("ProceduralFallbackRenderer"))
 local ProceduralChibiSelfTest = require(packageFolder:WaitForChild("ProceduralChibiSelfTest"))
+local AppearanceFingerprint = require(packageFolder:WaitForChild("AppearanceFingerprint"))
+local LayeredSpriteRenderer = require(packageFolder:WaitForChild("LayeredSpriteRenderer"))
+local LayeredSpriteRuntime = require(packageFolder:WaitForChild("LayeredSpriteRuntime"))
+local LayeredSpriteSelfTest = require(packageFolder:WaitForChild("LayeredSpriteSelfTest"))
+local MockStylizationProvider = require(packageFolder:WaitForChild("MockStylizationProvider"))
+local SpritePackageCache = require(packageFolder:WaitForChild("SpritePackageCache"))
 
-type Mode = "Original" | "Thumbnail" | "ProceduralChibi" | "Experimental" | "Retro3D"
+type Mode = "Original" | "Thumbnail" | "ProceduralChibi" | "Layered" | "Experimental" | "Retro3D"
 type Session = {
 	player: Player,
 	character: Model,
@@ -70,6 +76,7 @@ local stageButton: TextButton
 local stageEvent: BindableEvent
 local thumbnailFrame: Frame
 local thumbnailLabel: ImageLabel
+local layeredHost: Frame
 local thumbnailImage: EditableImage? = nil
 local thumbnailError: string? = nil
 local thumbnailLoading = false
@@ -79,11 +86,17 @@ local selfTestError: string? = nil
 local THUMBNAIL_PREVIEW_MAX = 512
 local previewTitle: TextLabel
 local proceduralDebugStage = Config.ProceduralChibiDebugStage
+local layeredState = "Idle"
+local layeredCache = SpritePackageCache.new()
+local layeredProvider = MockStylizationProvider.new(Config.LayeredMockDelaySeconds)
+local layeredRuntime: any? = nil
+local layeredActiveCharacter: Model? = nil
 
 local MODE_LABELS: { [Mode]: string } = {
 	Original = "Original",
 	Thumbnail = "Thumbnail pixel real",
 	ProceduralChibi = "Chibi procedural",
+	Layered = "Sprite por capas",
 	Experimental = "Pixelado experimental",
 	Retro3D = "Estilizado retro 3D",
 }
@@ -186,11 +199,12 @@ local function createPanel()
 
 	local modeRow = makeRow(content, 32)
 	modeRow.LayoutOrder = 2
-	for _, candidate: Mode in { "Original", "Thumbnail", "ProceduralChibi" } do
+	for _, candidate: Mode in { "Original", "Thumbnail", "ProceduralChibi", "Layered" } do
 		local widths: { [Mode]: number } = {
-			Original = 88,
-			Thumbnail = 148,
-			ProceduralChibi = 155,
+			Original = 76,
+			Thumbnail = 132,
+			ProceduralChibi = 138,
+			Layered = 142,
 			Experimental = 170,
 			Retro3D = 145,
 		}
@@ -292,6 +306,16 @@ local function createPanel()
 	thumbnailLabel.ResampleMode = Enum.ResamplerMode.Pixelated
 	thumbnailLabel.Parent = thumbnailFrame
 	rounded(thumbnailLabel, 5)
+
+	layeredHost = Instance.new("Frame")
+	layeredHost.Name = "LayeredSpriteHost"
+	layeredHost.AnchorPoint = Vector2.new(0.5, 0)
+	layeredHost.Position = UDim2.new(0.5, 0, 0, 45)
+	layeredHost.Size = UDim2.fromOffset(256, THUMBNAIL_PREVIEW_MAX)
+	layeredHost.BackgroundTransparency = 1
+	layeredHost.ClipsDescendants = true
+	layeredHost.Visible = false
+	layeredHost.Parent = thumbnailFrame
 end
 
 local function setSessionVisibility(session: Session)
@@ -368,7 +392,7 @@ local function refreshStatus()
 		end
 	elseif mode == "ProceduralChibi" then
 		statusTechnique.Text = string.format(
-			"Técnica: generador procedural Luau %dx%d",
+			"Técnica: fallback procedural experimental %dx%d",
 			Config.ProceduralChibiSize.X,
 			Config.ProceduralChibiSize.Y
 		)
@@ -378,8 +402,20 @@ local function refreshStatus()
 			statusWarning.Text = thumbnailError
 		else
 			statusWarning.Text =
-				"Sin IA externa: proporciones, rostro, paleta y composición generados dentro de Roblox."
+				"Fallback inmediato dentro de Roblox; no pretende reinterpretación ilustrada arbitraria."
 		end
+	elseif mode == "Layered" then
+		local metrics = if layeredRuntime then layeredRuntime:Metrics() else nil
+		statusTechnique.Text = "Técnica: SpritePackage por capas + rig 2D determinista"
+		statusWarning.Text = string.format(
+			"Estado: %s | provider mock=%d | caché=%d/%d | stale=%d | transición=%d",
+			layeredState,
+			layeredProvider.requests,
+			if metrics then metrics.cacheHits else 0,
+			if metrics then metrics.cacheMisses else 0,
+			if metrics then metrics.staleResponses else 0,
+			if metrics then metrics.transitions else 0
+		)
 	elseif mode == "Experimental" then
 		statusTechnique.Text = "Técnica: ViewportFrame de baja resolución (experimental)"
 		statusWarning.Text =
@@ -405,6 +441,7 @@ end
 local function regenerateThumbnail()
 	thumbnailGeneration += 1
 	local generation = thumbnailGeneration
+	local displayMode = mode
 	thumbnailLoading = true
 	thumbnailError = nil
 	if thumbnailImage then
@@ -430,7 +467,7 @@ local function regenerateThumbnail()
 				HeadRatio = Config.ThumbnailHeadRatio,
 				CleanIsolatedPixels = Config.ThumbnailCleanIsolatedPixels,
 			}
-		local requestedMode = mode
+		local requestedMode: Mode = if displayMode == "Layered" then "ProceduralChibi" else displayMode
 		local ok, result, renderMetrics = pcall(function()
 			if requestedMode == "ProceduralChibi" then
 				local skinColor = Color3.fromRGB(234, 190, 171)
@@ -439,7 +476,7 @@ local function regenerateThumbnail()
 				if head and head:IsA("BasePart") then
 					skinColor = head.Color
 				end
-				return ProceduralChibiRenderer.Create(localPlayer.UserId, {
+				return ProceduralFallbackRenderer.Create(localPlayer.UserId, {
 					OutputSize = Config.ProceduralChibiSize,
 					SkinColor = skinColor,
 					EyeColor = Config.ProceduralChibiEyeColor,
@@ -472,7 +509,7 @@ local function regenerateThumbnail()
 		thumbnailLoading = false
 		if ok then
 			thumbnailImage = result :: EditableImage
-			thumbnailRenderedMode = requestedMode
+			thumbnailRenderedMode = displayMode
 			thumbnailLabel.ImageContent = Content.fromObject(thumbnailImage)
 			local renderedSize = if requestedMode == "ProceduralChibi"
 				then Config.ProceduralChibiSize
@@ -683,7 +720,9 @@ local function updateResolution()
 	for _, session in sessions do
 		session.surfaceGui.CanvasSize = resolution
 	end
-	local imageSize = if mode == "ProceduralChibi" then Config.ProceduralChibiSize else resolution
+	local imageSize = if mode == "ProceduralChibi" or mode == "Layered"
+		then Config.ProceduralChibiSize
+		else resolution
 	local displayScale = math.max(
 		1,
 		math.floor(math.min(
@@ -702,18 +741,116 @@ local function updateResolution()
 	)
 end
 
+local function ensureLayeredRuntime()
+	if layeredRuntime then return end
+	layeredRuntime = LayeredSpriteRuntime.new({
+		provider = layeredProvider,
+		cache = layeredCache,
+		showFallback = function(fingerprint: string)
+			thumbnailLabel.Visible = true
+			layeredHost.Visible = true
+			print("[LayeredSprite] fallback fingerprint=" .. fingerprint)
+		end,
+		hideFallback = function()
+			thumbnailLabel.Visible = false
+			print("[LayeredSprite] fallback replaced without blank frame")
+		end,
+		createRenderer = function(package: any)
+			local renderer = LayeredSpriteRenderer.new(layeredHost, package, {
+				ViewportSize = Vector2.new(256, THUMBNAIL_PREVIEW_MAX),
+				Visible = false,
+				AutoPlay = true,
+			})
+			local metrics = renderer:Metrics()
+			print(string.format(
+				"[LayeredSprite] renderer layers=%d images=%d integerScale=%d clip=%s",
+				metrics.layers,
+				metrics.imagesCreated,
+				metrics.integerScale,
+				metrics.clip
+			))
+			return renderer
+		end,
+		onStateChanged = function(state: string, detail: string?)
+			layeredState = state
+			print(string.format("[LayeredSprite] state=%s detail=%s", state, detail or ""))
+			refreshStatus()
+		end,
+	})
+end
+
+local function startLayeredRuntime(isRespawn: boolean?)
+	local character = localPlayer.Character
+	if not character then return end
+	if mode == "Layered" then
+		thumbnailFrame.Visible = true
+		layeredHost.Visible = true
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+	local ok, descriptionOrError = pcall(function()
+		return humanoid:GetAppliedDescription()
+	end)
+	if not ok then
+		layeredState = "Failed"
+		warn("[LayeredSprite] fingerprint failed: " .. tostring(descriptionOrError))
+		return
+	end
+	local snapshot = AppearanceFingerprint.Capture(descriptionOrError :: HumanoidDescription)
+	local fingerprint = AppearanceFingerprint.FromSnapshot(snapshot)
+	ensureLayeredRuntime()
+	if not isRespawn
+		and layeredActiveCharacter == character
+		and layeredRuntime:GetFingerprint() == fingerprint
+		and table.find({ "Fallback", "Loading", "Validating", "Ready" }, layeredRuntime:GetState()) then
+		return
+	end
+	layeredActiveCharacter = character
+	if isRespawn then
+		layeredRuntime:Respawn(snapshot, fingerprint)
+	else
+		layeredRuntime:Start(snapshot, fingerprint)
+	end
+	thumbnailLabel.Visible = layeredRuntime:GetState() ~= "Ready"
+	print(string.format(
+		"[LayeredSprite] request fingerprint=%s respawn=%s",
+		fingerprint,
+		tostring(isRespawn == true)
+	))
+end
+
+local function stopLayeredRuntime()
+	if layeredRuntime and layeredRuntime:GetFingerprint() then
+		layeredRuntime:Cancel()
+	end
+	layeredActiveCharacter = nil
+	layeredHost.Visible = false
+end
+
 local function applyMode()
 	for _, session in sessions do
 		setSessionVisibility(session)
 	end
-	local isImageMode = mode == "Thumbnail" or mode == "ProceduralChibi"
+	local isImageMode = mode == "Thumbnail" or mode == "ProceduralChibi" or mode == "Layered"
 	thumbnailFrame.Visible = isImageMode
 	previewTitle.Text = if mode == "ProceduralChibi"
-		then "GENERADOR PROCEDURAL CHIBI / LUAU"
+		then "PROCEDURAL FALLBACK / LUAU"
+		elseif mode == "Layered" then "SPRITE PACKAGE / CAPAS + RIG"
 		else "AVATAR THUMBNAIL → PÍXELES REALES"
 	updateResolution()
-	if isImageMode and thumbnailRenderedMode ~= mode and not thumbnailLoading then
-		regenerateThumbnail()
+	if mode == "Layered" then
+		layeredHost.Visible = true
+		thumbnailLabel.Visible = layeredState ~= "Ready"
+		if thumbnailRenderedMode ~= "Layered" and not thumbnailLoading then
+			regenerateThumbnail()
+		end
+		startLayeredRuntime(false)
+	else
+		stopLayeredRuntime()
+		thumbnailLabel.Visible = true
+		if isImageMode and thumbnailRenderedMode ~= mode and not thumbnailLoading then
+			regenerateThumbnail()
+		end
 	end
 	refreshButtonStyles()
 	refreshStatus()
@@ -937,13 +1074,30 @@ local function watchPlayer(player: Player)
 	playerConnections[player] = connections
 	table.insert(connections, player.CharacterAdded:Connect(function(character)
 		task.defer(createSession, player, character)
+		if player == localPlayer then
+			task.delay(0.4, function()
+				if mode == "Layered" and localPlayer.Character == character then
+					startLayeredRuntime(true)
+				end
+			end)
+		end
 	end))
 	table.insert(connections, player.CharacterRemoving:Connect(function()
 		destroySession(player)
+		if player == localPlayer then
+			stopLayeredRuntime()
+		end
 	end))
 	table.insert(connections, player.CharacterAppearanceLoaded:Connect(function(character)
 		if character == player.Character and sessions[player] == nil then
 			task.defer(createSession, player, character)
+		end
+		if player == localPlayer then
+			task.delay(0.2, function()
+				if mode == "Layered" and localPlayer.Character == character then
+					startLayeredRuntime(true)
+				end
+			end)
 		end
 	end))
 	if player.Character then
@@ -1021,6 +1175,22 @@ if RunService:IsStudio() and Config.ProceduralChibiRunSelfTest then
 		statusWarning.Text = "ProceduralChibiSelfTest FALLÓ: " .. selfTestError
 		warn("[ProceduralChibiSelfTest] FAIL: " .. tostring(selfTestResult))
 	end
+	local layeredTestOk, layeredTestResult = pcall(LayeredSpriteSelfTest.Run)
+	if layeredTestOk then
+		print(string.format(
+			"[LayeredSpriteSelfTest] PASS fingerprint=%s layers=%d cacheHits=%d stale=%d transitions=%d images=%d",
+			layeredTestResult.fingerprint,
+			layeredTestResult.layerCount,
+			layeredTestResult.cacheHits,
+			layeredTestResult.staleResponses,
+			layeredTestResult.transitions,
+			layeredTestResult.imagesCreated
+		))
+	else
+		selfTestError = tostring(layeredTestResult)
+		statusWarning.Text = "LayeredSpriteSelfTest FALLÓ: " .. selfTestError
+		warn("[LayeredSpriteSelfTest] FAIL: " .. tostring(layeredTestResult))
+	end
 end
 for candidate, button in modeButtons do
 	table.insert(globalConnections, button.Activated:Connect(function()
@@ -1030,7 +1200,7 @@ for candidate, button in modeButtons do
 end
 table.insert(globalConnections, outlineButton.Activated:Connect(function()
 	outlineEnabled = not outlineEnabled
-	if mode == "Thumbnail" or mode == "ProceduralChibi" then
+	if mode == "Thumbnail" or mode == "ProceduralChibi" or mode == "Layered" then
 		regenerateThumbnail()
 	end
 	applyMode()
@@ -1061,7 +1231,7 @@ for index, button in resolutionButtons do
 	table.insert(globalConnections, button.Activated:Connect(function()
 		resolution = Config.Resolutions[index]
 		updateResolution()
-		if mode == "Thumbnail" or mode == "ProceduralChibi" then
+		if mode == "Thumbnail" or mode == "ProceduralChibi" or mode == "Layered" then
 			regenerateThumbnail()
 		end
 		refreshButtonStyles()

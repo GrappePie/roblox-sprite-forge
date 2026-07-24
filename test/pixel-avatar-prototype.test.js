@@ -12,6 +12,10 @@ const proceduralChibi = fs.readFileSync(
   "studio-prototype/ProceduralChibiRenderer.lua",
   "utf8",
 );
+const proceduralFallback = fs.readFileSync(
+  "studio-prototype/ProceduralFallbackRenderer.lua",
+  "utf8",
+);
 const proceduralFinalizer = fs.readFileSync(
   "studio-prototype/ProceduralImageFinalizer.lua",
   "utf8",
@@ -60,6 +64,34 @@ const controller = fs.readFileSync(
   "studio-prototype/PixelAvatarController.client.lua",
   "utf8",
 );
+const appearanceFingerprint = fs.readFileSync(
+  "studio-prototype/AppearanceFingerprint.lua",
+  "utf8",
+);
+const spritePackage = fs.readFileSync(
+  "studio-prototype/SpritePackage.lua",
+  "utf8",
+);
+const spriteCache = fs.readFileSync(
+  "studio-prototype/SpritePackageCache.lua",
+  "utf8",
+);
+const mockProvider = fs.readFileSync(
+  "studio-prototype/MockStylizationProvider.lua",
+  "utf8",
+);
+const layeredRenderer = fs.readFileSync(
+  "studio-prototype/LayeredSpriteRenderer.lua",
+  "utf8",
+);
+const layeredRuntime = fs.readFileSync(
+  "studio-prototype/LayeredSpriteRuntime.lua",
+  "utf8",
+);
+const layeredSelfTest = fs.readFileSync(
+  "studio-prototype/LayeredSpriteSelfTest.lua",
+  "utf8",
+);
 
 test("Roblox-only pixel avatar keeps centralized requested settings", () => {
   for (const setting of [
@@ -94,6 +126,8 @@ test("Roblox-only pixel avatar keeps centralized requested settings", () => {
     "ProceduralChibiDebugStage",
     "ProceduralChibiRunSelfTest",
     "ProceduralChibiDebugStages",
+    "LayeredSpriteCanvasSize",
+    "LayeredMockDelaySeconds",
   ]) {
     assert.match(config, new RegExp(`\\b${setting}\\b`));
   }
@@ -120,6 +154,7 @@ test("comparison controller exposes all requested modes and controls", () => {
     "Original",
     "Thumbnail pixel real",
     "Chibi procedural",
+    "Sprite por capas",
     "Pixelado experimental",
     "Estilizado retro 3D",
     "Contorno",
@@ -292,9 +327,69 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
   assert.match(proceduralChibi, /avatarImage:Destroy/);
   assert.match(proceduralChibi, /WritePixelsBuffer/);
   assert.match(proceduralChibi, /Vector2/);
-  assert.match(controller, /ProceduralChibiRenderer\.Create/);
-  assert.match(controller, /Sin IA externa/);
+  assert.match(proceduralFallback, /ProceduralChibiRenderer/);
+  assert.match(controller, /ProceduralFallbackRenderer\.Create/);
+  assert.match(controller, /fallback procedural experimental/);
   assert.match(config, /ProceduralChibiSize = Vector2\.new\(128, 256\)/);
+});
+
+test("layered sprite runtime defines the hybrid package milestone", () => {
+  assert.match(config, /DefaultMode = "Layered"/);
+  assert.match(appearanceFingerprint, /FromSnapshot/);
+  assert.match(appearanceFingerprint, /GetAccessories\(true\)/);
+  assert.match(spritePackage, /schemaVersion must be 1/);
+  for (const layer of [
+    "BackHair", "Face", "FrontHair", "Torso", "LeftArm", "RightArm",
+    "Skirt", "LeftLeg", "RightLeg", "Accessories",
+  ]) {
+    assert.ok(spritePackage.includes(layer), `missing required package layer ${layer}`);
+  }
+  for (const clip of ["Idle", "Walk", "Jump"]) {
+    assert.ok(spritePackage.includes(clip), `missing package clip ${clip}`);
+  }
+  assert.match(spriteCache, /function SpritePackageCache\.Get/);
+  assert.match(spriteCache, /function SpritePackageCache\.Put/);
+  assert.match(mockProvider, /kind = "Mock"/);
+  assert.match(mockProvider, /BuildPackage/);
+  assert.match(layeredRenderer, /Enum\.ResamplerMode\.Pixelated/);
+  assert.match(layeredRenderer, /CalculateIntegerScale/);
+  assert.match(layeredRenderer, /SampleClip/);
+  assert.match(layeredRenderer, /CreateEditableImage/);
+  assert.match(layeredRenderer, /WritePixelsBuffer/);
+  assert.match(layeredRenderer, /function LayeredSpriteRenderer\.Destroy/);
+  assert.match(layeredRuntime, /"Fingerprinting"/);
+  assert.match(layeredRuntime, /"Fallback"/);
+  assert.match(layeredRuntime, /"Loading"/);
+  assert.match(layeredRuntime, /"Validating"/);
+  assert.match(layeredRuntime, /"Ready"/);
+  assert.match(layeredRuntime, /"Failed"/);
+  assert.match(layeredRuntime, /"Stale"/);
+  assert.match(layeredRuntime, /staleResponses/);
+  assert.match(layeredRuntime, /self:HideFallback\(\)/);
+  assert.match(controller, /LayeredSpriteRenderer\.new/);
+  assert.match(controller, /startLayeredRuntime\(true\)/);
+  assert.match(controller, /layeredHost\.Visible = true/);
+  assert.match(controller, /thumbnailLabel\.Visible = layeredRuntime:GetState\(\) ~= "Ready"/);
+  assert.match(controller, /\[LayeredSpriteSelfTest\] PASS/);
+});
+
+test("layered Luau self-test covers runtime behavior instead of source-only invariants", () => {
+  assert.match(layeredSelfTest, /Fingerprint must ignore table key order/);
+  assert.match(layeredSelfTest, /Appearance changes must invalidate the fingerprint/);
+  assert.match(layeredSelfTest, /Invalid schema must be rejected/);
+  assert.match(layeredSelfTest, /Layer order must follow zIndex/);
+  assert.match(layeredSelfTest, /First cache lookup must miss/);
+  assert.match(layeredSelfTest, /Second cache lookup must hit/);
+  assert.match(layeredSelfTest, /Stale provider response must be counted/);
+  assert.match(layeredSelfTest, /Fallback must appear first/);
+  assert.match(layeredSelfTest, /Replacement must be visible before fallback hides/);
+  assert.match(layeredSelfTest, /Respawn must reuse a cached valid package/);
+  assert.match(layeredSelfTest, /Idle rig must animate a layer transform/);
+  assert.match(layeredSelfTest, /Renderer must support Walk/);
+  assert.match(layeredSelfTest, /Renderer must support Jump/);
+  assert.match(layeredSelfTest, /Animation must not regenerate EditableImages/);
+  assert.match(layeredSelfTest, /Renderer cleanup must destroy its GUI/);
+  assert.match(layeredSelfTest, /Invalid provider package must fail validation/);
 });
 
 test("procedural image is finalized only after composition with locked colors", () => {

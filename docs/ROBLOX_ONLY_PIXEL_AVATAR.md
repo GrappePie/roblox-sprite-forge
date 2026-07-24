@@ -33,6 +33,59 @@ This mode is genuinely rasterized pixel art, but it is a static avatar pose. It
 does not pretend to solve arbitrary real-time animation. The second functional
 mode remains a **retro 3D visual replica**:
 
+## Hybrid layered SpritePackage milestone
+
+The final direction is now a hybrid runtime. `ProceduralChibi` is frozen as an
+experimental `ProceduralFallbackRenderer`: it is useful for immediate local
+feedback, palette extraction, thumbnails and failure handling, but a
+deterministic thumbnail segmenter cannot reinterpret arbitrary 3D hair,
+accessories and clothing with the artistic decisions of a hand-drawn chibi.
+Passing structural tests does not prove visual similarity to an illustration.
+
+The maintained path consumes a versioned `SpritePackage`:
+
+```text
+HumanoidDescription
+→ deterministic appearance fingerprint
+→ in-session package cache
+├── hit: validate and render
+└── miss: show ProceduralChibi fallback
+          → StylizationProvider
+          → validate package
+          → construct hidden layered renderer
+          → reveal renderer
+          → hide fallback in the same transition
+```
+
+The first milestone deliberately uses `MockStylizationProvider`, which returns
+a static, manually-authored chibi package. It proves the runtime contract
+without pretending to generate art inside Luau. `StylizationProvider` leaves
+explicit future boundaries for an HTTP backend, an offline authoring tool or a
+curated manual library. No API key or provider secret exists in a LocalScript.
+
+`SpritePackage` schema version 1 contains:
+
+- a 64×96 canonical canvas and a palette of at most 96 colors;
+- ordered `BackHair`, `Face`, `FrontHair`, `Torso`, `LeftArm`, `RightArm`,
+  `Skirt`, `LeftLeg`, `RightLeg` and `Accessories` layers;
+- per-layer `zIndex`, pivot, anchor and palette-indexed pixel rectangles;
+- named root, head, hand and foot anchors;
+- a parented 2D joint description; and
+- deterministic `Idle`, `Walk` and `Jump` clips containing transform
+  keyframes.
+
+`LayeredSpriteRenderer` creates one `EditableImage` per layer, uses integer
+nearest-neighbour scaling, respects z-order/pivots/anchors, and animates only
+the ImageLabel transforms. It never regenerates raster pixels per frame.
+`LayeredSpriteRuntime` owns the states `Idle`, `Fingerprinting`, `Fallback`,
+`Loading`, `Validating`, `Ready`, `Failed` and `Stale`, rejects obsolete
+responses, reuses cached packages across respawns and cleans every renderer.
+
+Roblox remains responsible for fingerprinting, cache lookup, schema
+validation, display, rig animation, fallback, respawn, stale cancellation and
+resource cleanup. A future high-fidelity artistic reinterpretation is the only
+part that must occur in an external/offline provider or a pre-authored library.
+
 ## Pure-Luau procedural chibi mode
 
 `Chibi procedural` is a separate 128×256 generator that runs entirely in the
@@ -113,7 +166,16 @@ ReplicatedStorage
     ├── ProceduralChibiAccessoryCompletion
     ├── ProceduralChibiHead
     ├── ProceduralChibiSelfTest
-    └── ProceduralChibiRenderer
+    ├── ProceduralChibiRenderer
+    ├── ProceduralFallbackRenderer
+    ├── AppearanceFingerprint
+    ├── SpritePackage
+    ├── SpritePackageCache
+    ├── StylizationProvider
+    ├── MockStylizationProvider
+    ├── LayeredSpriteRenderer
+    ├── LayeredSpriteRuntime
+    └── LayeredSpriteSelfTest
 
 StarterPlayer
 └── StarterPlayerScripts
@@ -143,6 +205,7 @@ The panel in the lower-left corner provides:
 - `Original`
 - `Thumbnail pixel real`
 - `Chibi procedural`
+- `Sprite por capas`
 - `Pixelado experimental`
 - `Estilizado retro 3D`
 - outline on/off

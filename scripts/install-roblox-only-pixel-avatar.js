@@ -108,6 +108,51 @@ await client.callTool("mass_create_objects", {
       name: "ProceduralChibiRenderer",
     },
     {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "ProceduralFallbackRenderer",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "AppearanceFingerprint",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "SpritePackage",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "SpritePackageCache",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "StylizationProvider",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "MockStylizationProvider",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "LayeredSpriteRenderer",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "LayeredSpriteRuntime",
+    },
+    {
+      className: "ModuleScript",
+      parent: "game.ReplicatedStorage.PixelAvatar",
+      name: "LayeredSpriteSelfTest",
+    },
+    {
       className: "LocalScript",
       parent: "game.StarterPlayer.StarterPlayerScripts",
       name: "PixelAvatarController",
@@ -160,6 +205,33 @@ for (const [instancePath, filename] of [
   [
     "game.ReplicatedStorage.PixelAvatar.ProceduralChibiRenderer",
     "ProceduralChibiRenderer.lua",
+  ],
+  [
+    "game.ReplicatedStorage.PixelAvatar.ProceduralFallbackRenderer",
+    "ProceduralFallbackRenderer.lua",
+  ],
+  [
+    "game.ReplicatedStorage.PixelAvatar.AppearanceFingerprint",
+    "AppearanceFingerprint.lua",
+  ],
+  ["game.ReplicatedStorage.PixelAvatar.SpritePackage", "SpritePackage.lua"],
+  ["game.ReplicatedStorage.PixelAvatar.SpritePackageCache", "SpritePackageCache.lua"],
+  ["game.ReplicatedStorage.PixelAvatar.StylizationProvider", "StylizationProvider.lua"],
+  [
+    "game.ReplicatedStorage.PixelAvatar.MockStylizationProvider",
+    "MockStylizationProvider.lua",
+  ],
+  [
+    "game.ReplicatedStorage.PixelAvatar.LayeredSpriteRenderer",
+    "LayeredSpriteRenderer.lua",
+  ],
+  [
+    "game.ReplicatedStorage.PixelAvatar.LayeredSpriteRuntime",
+    "LayeredSpriteRuntime.lua",
+  ],
+  [
+    "game.ReplicatedStorage.PixelAvatar.LayeredSpriteSelfTest",
+    "LayeredSpriteSelfTest.lua",
   ],
   [
     "game.StarterPlayer.StarterPlayerScripts.PixelAvatarController",

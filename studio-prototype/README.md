@@ -58,10 +58,22 @@ The maintained successor to the disposable POC is split into:
 - `ProceduralChibiFace.lua`
 - `ProceduralChibiSelfTest.lua`
 - `ProceduralChibiRenderer.lua`
+- `ProceduralFallbackRenderer.lua`
+- `AppearanceFingerprint.lua`
+- `SpritePackage.lua`
+- `SpritePackageCache.lua`
+- `StylizationProvider.lua`
+- `MockStylizationProvider.lua`
+- `LayeredSpriteRenderer.lua`
+- `LayeredSpriteRuntime.lua`
+- `LayeredSpriteSelfTest.lua`
 - `PixelAvatarController.client.lua`
 
 Install it in the connected place with `npm run studio:install-roblox-only`.
-It provides Original, unsupported low-resolution ViewportFrame, and functional
-retro 3D comparison modes. See
+It provides Original, procedural fallback, layered SpritePackage, unsupported
+low-resolution ViewportFrame, and functional retro 3D comparison modes.
+`ProceduralChibi` is intentionally retained as an experimental fallback; the
+layered renderer is the runtime boundary for externally generated or manually
+authored art. See
 [`../docs/ROBLOX_ONLY_PIXEL_AVATAR.md`](../docs/ROBLOX_ONLY_PIXEL_AVATAR.md) for
 the verified platform limitation, controls, lifecycle, and tuning notes.
