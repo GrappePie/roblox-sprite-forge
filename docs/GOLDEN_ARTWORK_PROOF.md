@@ -109,7 +109,7 @@ The panel exposes:
 
 - Original avatar;
 - Procedural fallback;
-- Mock estático;
+- Mock generado;
 - Golden artwork;
 - Golden artwork 128×256;
 - Golden artwork 256×512.
@@ -128,5 +128,7 @@ therefore enters `MissingGoldenArtworkAppearanceMismatch` instead of displaying
 stale artwork. Animation assets are excluded because they do not change the
 visible outfit. `CharacterAppearanceLoaded` also invalidates the local thumbnail
 so the procedural fallback is regenerated for the new public appearance. The
-mock remains intentionally static and only its technical package fingerprint
-changes.
+mock generates a new procedural chibi for the current public avatar, freezes
+those pixels into a static `CharacterFlat` package and caches it under that
+appearance fingerprint. Changing avatar therefore creates a different static
+mock without changing the player's 3D character.

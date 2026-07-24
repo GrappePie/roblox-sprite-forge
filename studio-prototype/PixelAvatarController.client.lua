@@ -119,7 +119,7 @@ local MODE_LABELS: { [Mode]: string } = {
 	Original = "Original",
 	Thumbnail = "Thumbnail pixel real",
 	ProceduralChibi = "Chibi procedural",
-	MockPackage = "Mock estático",
+	MockPackage = "Mock generado",
 	GoldenArtwork = "Golden artwork",
 	GoldenDerived = "Golden 128x256",
 	GoldenMaster = "Golden 256x512",
@@ -453,7 +453,7 @@ local function refreshStatus()
 		local metrics = if layeredRuntime then layeredRuntime:Metrics() else nil
 		local provider = packageProvider(mode)
 		statusTechnique.Text = if mode == "MockPackage"
-			then "Técnica: mock estático; sólo prueba infraestructura y no sigue el avatar"
+			then "Técnica: paquete estático generado desde el avatar equipado"
 			else "Técnica: Golden Artwork RGBA plano, sin rig ni animación"
 		statusWarning.Text = string.format(
 			"Estado: %s | requests=%d | caché=%d/%d | stale=%d | transición=%d",
@@ -893,6 +893,7 @@ local function applyMode()
 	thumbnailFrame.Visible = isImageMode
 	previewTitle.Text = if mode == "ProceduralChibi"
 		then "PROCEDURAL FALLBACK / LUAU"
+		elseif mode == "MockPackage" then "MOCK GENERADO / AVATAR ACTUAL"
 		elseif isPackageMode(mode) then "GOLDEN ARTWORK / FLAT PROOF"
 		else "AVATAR THUMBNAIL → PÍXELES REALES"
 	updateResolution()

@@ -157,7 +157,7 @@ test("comparison controller exposes all requested modes and controls", () => {
   for (const text of [
     "Original",
     "Chibi procedural",
-    "Mock estático",
+    "Mock generado",
     "Golden artwork",
     "Golden 128x256",
     "Golden 256x512",
@@ -356,6 +356,13 @@ test("layered sprite runtime defines the hybrid package milestone", () => {
   assert.match(spriteCache, /function SpritePackageCache\.Put/);
   assert.match(mockProvider, /kind = "Mock"/);
   assert.match(mockProvider, /BuildPackage/);
+  assert.match(mockProvider, /BuildStaticPackage/);
+  assert.match(mockProvider, /ProceduralFallbackRenderer/);
+  assert.match(mockProvider, /appearance\.userId/);
+  assert.doesNotMatch(
+    mockProvider.match(/function MockStylizationProvider\.Request[\s\S]*?end\s*\n\s*return MockStylizationProvider/)?.[0] ?? "",
+    /return MockStylizationProvider\.BuildPackage\(request\.fingerprint\)/,
+  );
   assert.match(goldenProvider, /kind = "GoldenArtwork"/);
   assert.match(goldenProvider, /CharacterFlat/);
   assert.match(goldenProvider, /loadRgba/);
@@ -386,7 +393,7 @@ test("layered sprite runtime defines the hybrid package milestone", () => {
   assert.match(controller, /thumbnailLabel\.Visible = layeredRuntime:GetState\(\) ~= "Ready"/);
   assert.match(controller, /\[LayeredSpriteSelfTest\] PASS/);
   assert.match(controller, /GoldenArtworkProvider/);
-  assert.match(controller, /Mock estático/);
+  assert.match(controller, /Mock generado/);
   assert.match(
     controller,
     /CharacterAppearanceLoaded:Connect[\s\S]*regenerateThumbnail\(\)/,
@@ -401,6 +408,7 @@ test("layered Luau self-test covers runtime behavior instead of source-only inva
   assert.match(layeredSelfTest, /Invalid schema must be rejected/);
   assert.match(layeredSelfTest, /Flat SpritePackage must validate/);
   assert.match(layeredSelfTest, /Changed appearance must not reuse Golden Artwork by userId/);
+  assert.match(layeredSelfTest, /Different avatar renders must produce different static mock pixels/);
   assert.match(layeredSelfTest, /Flat renderer must create one EditableImage/);
   assert.match(layeredSelfTest, /Missing golden artwork must be a distinct state/);
   assert.match(layeredSelfTest, /Flat artwork respawn must reuse cache/);

@@ -3,6 +3,10 @@
 local MockStylizationProvider = {}
 MockStylizationProvider.__index = MockStylizationProvider
 
+local Config = require(script.Parent:WaitForChild("PixelAvatarConfig"))
+local ProceduralFallbackRenderer =
+	require(script.Parent:WaitForChild("ProceduralFallbackRenderer"))
+
 type Rect = {
 	x: number,
 	y: number,
@@ -16,6 +20,7 @@ export type Provider = typeof(setmetatable({} :: {
 	kind: "Mock",
 	delaySeconds: number,
 	requests: number,
+	renderStatic: any,
 }, MockStylizationProvider))
 
 local function rect(x: number, y: number, width: number, height: number, colorIndex: number): Rect
@@ -190,11 +195,78 @@ function MockStylizationProvider.BuildPackage(fingerprint: string)
 	}
 end
 
-function MockStylizationProvider.new(delaySeconds: number?): Provider
+function MockStylizationProvider.BuildStaticPackage(
+	fingerprint: string,
+	rgba: buffer,
+	size: Vector2
+)
+	local width = math.floor(size.X)
+	local height = math.floor(size.Y)
+	assert(width > 0 and height > 0, "Mock static image size must be positive")
+	assert(buffer.len(rgba) == width * height * 4, "Mock static RGBA length mismatch")
+	local pixels = buffer.create(buffer.len(rgba))
+	buffer.copy(pixels, 0, rgba)
+	return {
+		schemaVersion = 1,
+		id = "mock-static-v2-" .. fingerprint,
+		fingerprint = fingerprint,
+		canvasSize = Vector2.new(width, height),
+		palette = {},
+		layers = {
+			{
+				name = "CharacterFlat",
+				zIndex = 0,
+				anchor = Vector2.new(0.5, 1),
+				pivot = Vector2.new(0.5, 1),
+				rects = {},
+			},
+		},
+		anchors = {},
+		rig = {},
+		clips = {},
+		flatArtwork = {
+			width = width,
+			height = height,
+			rgba = pixels,
+			anchor = Vector2.new(0.5, 1),
+			pivot = Vector2.new(0.5, 1),
+			variant = "generated-static",
+			contentHash = fingerprint,
+		},
+	}
+end
+
+local function renderOptions(appearance: any)
+	local skinColor = if type(appearance) == "table" and typeof(appearance.HeadColor) == "Color3"
+		then appearance.HeadColor
+		else Color3.fromRGB(234, 190, 171)
+	return {
+		OutputSize = Config.ProceduralChibiSize,
+		SkinColor = skinColor,
+		EyeColor = Config.ProceduralChibiEyeColor,
+		HeadRatio = Config.ThumbnailHeadRatio,
+		HeadHeightRatio = Config.ProceduralChibiHeadHeightRatio,
+		HeadWidthRatio = if Config.ProceduralChibiHeadWidthAuto
+			then nil
+			else Config.ProceduralChibiHeadWidthRatio,
+		HairSecondaryMinimumCoverage = Config.ProceduralChibiHairSecondaryMinimumCoverage,
+		AccessoryMinimumConfidence = Config.ProceduralChibiAccessoryMinimumConfidence,
+		MaxAccessoryComponents = Config.ProceduralChibiMaxAccessoryComponents,
+		HeadFallbackEnabled = Config.ProceduralChibiHeadFallbackEnabled,
+		PaletteSize = Config.ProceduralChibiPaletteSize,
+		AlphaThreshold = Config.ProceduralChibiAlphaThreshold,
+		OutlineColor = Config.OutlineColor,
+		OutlineEnabled = Config.OutlineEnabled,
+		DebugStage = "Final",
+	}
+end
+
+function MockStylizationProvider.new(delaySeconds: number?, renderStatic: any?): Provider
 	return setmetatable({
 		kind = "Mock",
-		delaySeconds = math.max(0, delaySeconds or 0.8),
+		delaySeconds = math.max(0, delaySeconds or 0),
 		requests = 0,
+		renderStatic = renderStatic or ProceduralFallbackRenderer.Create,
 	}, MockStylizationProvider)
 end
 
@@ -203,7 +275,25 @@ function MockStylizationProvider.Request(self: Provider, request: any)
 	if self.delaySeconds > 0 then
 		task.wait(self.delaySeconds)
 	end
-	return MockStylizationProvider.BuildPackage(request.fingerprint)
+	local appearance = request.appearance
+	local userId = if type(appearance) == "table" then tonumber(appearance.userId) else nil
+	assert(userId and userId > 0, "Mock static generation requires appearance.userId")
+	local image: EditableImage? = nil
+	local ok, packageOrError = xpcall(function()
+		local generated = self.renderStatic(userId, renderOptions(appearance))
+		assert(generated and generated:IsA("EditableImage"), "Mock renderer must return EditableImage")
+		image = generated
+		local size = generated.Size
+		local pixels = generated:ReadPixelsBuffer(Vector2.zero, size)
+		return MockStylizationProvider.BuildStaticPackage(request.fingerprint, pixels, size)
+	end, debug.traceback)
+	if image then
+		image:Destroy()
+	end
+	if not ok then
+		error(packageOrError)
+	end
+	return packageOrError
 end
 
 return MockStylizationProvider

@@ -33,7 +33,7 @@ return table.freeze({
 	ProceduralChibiDebugStage = "Final",
 	ProceduralChibiRunSelfTest = true,
 	LayeredSpriteCanvasSize = Vector2.new(64, 96),
-	LayeredMockDelaySeconds = 8.5,
+	LayeredMockDelaySeconds = 0,
 	GoldenArtworkMasterSize = Vector2.new(256, 512),
 	GoldenArtworkDerivedSize = Vector2.new(128, 256),
 	ProceduralChibiDebugStages = table.freeze({

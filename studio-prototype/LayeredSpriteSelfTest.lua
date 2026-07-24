@@ -73,6 +73,40 @@ function LayeredSpriteSelfTest.Run()
 	assert(validation.valid, table.concat(validation.errors, "; "))
 	assertEqual(validation.layerOrder[1], "BackHair", "Layer order must follow zIndex")
 	assertEqual(validation.layerOrder[#validation.layerOrder], "Accessories", "Accessories must render last")
+	local staticPixelsA = buffer.create(8 * 16 * 4)
+	local staticPixelsB = buffer.create(8 * 16 * 4)
+	for pixel = 0, 8 * 16 - 1 do
+		local byteOffset = pixel * 4
+		buffer.writeu8(staticPixelsA, byteOffset, 35)
+		buffer.writeu8(staticPixelsA, byteOffset + 1, 190)
+		buffer.writeu8(staticPixelsA, byteOffset + 2, 90)
+		buffer.writeu8(staticPixelsA, byteOffset + 3, 255)
+		buffer.writeu8(staticPixelsB, byteOffset, 190)
+		buffer.writeu8(staticPixelsB, byteOffset + 1, 55)
+		buffer.writeu8(staticPixelsB, byteOffset + 2, 170)
+		buffer.writeu8(staticPixelsB, byteOffset + 3, 255)
+	end
+	local generatedA = MockStylizationProvider.BuildStaticPackage(
+		fingerprintA,
+		staticPixelsA,
+		Vector2.new(8, 16)
+	)
+	local generatedB = MockStylizationProvider.BuildStaticPackage(
+		fingerprintB,
+		staticPixelsB,
+		Vector2.new(8, 16)
+	)
+	assert(SpritePackage.Validate(generatedA, fingerprintA).valid, "Generated mock A must validate")
+	assert(SpritePackage.Validate(generatedB, fingerprintB).valid, "Generated mock B must validate")
+	assert(
+		buffer.readu8(generatedA.flatArtwork.rgba, 0)
+			~= buffer.readu8(generatedB.flatArtwork.rgba, 0),
+		"Different avatar renders must produce different static mock pixels"
+	)
+	assert(
+		generatedA.fingerprint ~= generatedB.fingerprint,
+		"Different avatar appearances must keep separate mock packages"
+	)
 	local invalidPackage = table.clone(package)
 	invalidPackage.schemaVersion = 99
 	local invalid = SpritePackage.Validate(invalidPackage, fingerprintA)
