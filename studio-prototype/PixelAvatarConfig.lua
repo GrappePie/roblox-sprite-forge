@@ -1,0 +1,49 @@
+--!strict
+
+return table.freeze({
+	PixelResolution = Vector2.new(96, 96),
+	PaletteLevels = 6,
+	OutlineEnabled = true,
+	OutlineThickness = 1,
+	OutlineColor = Color3.fromRGB(28, 34, 46),
+	UpdateRate = 15,
+	RenderDistance = 100,
+	UsePixelatedSampling = true,
+	ThumbnailChannelLevels = 4,
+	ThumbnailPaletteSize = 24,
+	ThumbnailHeadPaletteSize = 18,
+	ThumbnailBodyPaletteSize = 24,
+	ThumbnailAccentPreservation = 0.28,
+	ThumbnailAlphaThreshold = 28,
+	ThumbnailOutlineRadius = 1,
+	ThumbnailCropPadding = 0.025,
+	ThumbnailHeadRatio = 0.43,
+	ThumbnailCleanIsolatedPixels = true,
+	ProceduralChibiSize = Vector2.new(128, 256),
+	ProceduralChibiEyeColor = Color3.fromRGB(116, 88, 168),
+	ProceduralChibiPaletteSize = 48,
+	ProceduralChibiAlphaThreshold = 48,
+	ProceduralChibiHeadHeightRatio = 0.41,
+	ProceduralChibiDebugStage = "Final",
+
+	DefaultMode = "ProceduralChibi",
+	Resolutions = table.freeze({
+		Vector2.new(32, 32),
+		Vector2.new(48, 48),
+		Vector2.new(64, 64),
+		Vector2.new(80, 80),
+		Vector2.new(96, 96),
+	}),
+	UpdateRates = table.freeze({ 8, 12, 15, 30 }),
+
+	FlatAmbient = Color3.fromRGB(190, 190, 190),
+	FlatLightColor = Color3.fromRGB(255, 246, 224),
+	FlatLightDirection = Vector3.new(-1, -0.65, -1.2),
+	RetroMaterial = Enum.Material.SmoothPlastic,
+	OutlineFillTransparency = 1,
+	OutlineDepthMode = Enum.HighlightDepthMode.Occluded,
+
+	-- ViewportFrame has no supported pixel-read/capture API. This mode is kept
+	-- only for honest A/B comparison with the functional Retro3D fallback.
+	ExperimentalPixelCaptureSupported = false,
+})

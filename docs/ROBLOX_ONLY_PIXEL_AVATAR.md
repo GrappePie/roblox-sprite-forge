@@ -1,0 +1,229 @@
+# Roblox-only Pixel Avatar prototype
+
+## Honest result
+
+Roblox currently does **not** expose a supported API that copies the pixels
+rendered by a `ViewportFrame` into an `EditableImage`. `ViewportFrame` has
+rendering and lighting properties, but no pixel-read or capture method.
+`EditableImage:ReadPixelsBuffer()` can only read pixels already contained in an
+`EditableImage`; it cannot use a `ViewportFrame` as its source.
+
+The prototype now separates that unsolved animated-raster problem from a
+solvable first target: a **real pixel image made from the player's public avatar
+thumbnail**. Roblox loads the 420×420 avatar thumbnail into an `EditableImage`,
+then the client:
+
+- crops the transparent thumbnail margin and fits the silhouette back into the
+  canvas without changing its aspect ratio;
+- downsamples to 32×32, 48×48, 64×64, 80×80 or 96×96 with a box filter using premultiplied
+  alpha;
+- applies a hard alpha threshold;
+- builds a deterministic 24-color adaptive palette from the avatar itself,
+  preserving uncommon identity colors without scattered texture noise;
+- retains a controlled fraction of tiny high-chroma accents before palette
+  fitting, so eyes and characteristic trim survive the box reduction;
+- fits separate adaptive palettes to the head and body regions so skin, hair
+  and face details do not compete with the outfit for the same colors;
+- removes fully isolated occupancy pixels and keeps the one-pixel silhouette
+  outline cardinal rather than diagonally thick;
+- creates a one-pixel silhouette outline morphologically; and
+- displays the result with `ResamplerMode.Pixelated` nearest-neighbor scaling.
+
+This mode is genuinely rasterized pixel art, but it is a static avatar pose. It
+does not pretend to solve arbitrary real-time animation. The second functional
+mode remains a **retro 3D visual replica**:
+
+## Pure-Luau procedural chibi mode
+
+`Chibi procedural` is a separate 128×192 generator that runs entirely in the
+Roblox client. It uses the pixelized Roblox avatar as identity input, then:
+
+- separates the visible head and body regions;
+- remaps them independently into fixed chibi proportions;
+- preserves the avatar's sampled hair, accessories and outfit colors;
+- paints a deterministic skin-colored face region;
+- draws anime eyes, highlights, lashes, blush and a small mouth;
+- samples the avatar's hair color and redraws a graphic fringe over the face;
+- writes the finished composition to a new `EditableImage`.
+
+This is not an external AI call and does not contact the local Sprite Forge
+server or ComfyUI. It is a deterministic procedural renderer written in Luau.
+The current milestone produces one static frontal pose. Its output is designed
+as the master image for a later cached animation atlas.
+
+- Roblox loads the player's public `HumanoidDescription`.
+- A visual-only model is created with the same rig type as the playable
+  character.
+- Accessories, layered clothing, textures, body proportions and colors remain
+  recognizable.
+- Scripts, sounds, particles, trails, beams and physical interactions are
+  removed from the replica.
+- Materials and untextured part colors are simplified.
+- A configurable dark `Highlight` supplies the silhouette outline.
+- Animation tracks are mirrored by asset ID and sampled at the selected visual
+  rate.
+- The generated `Humanoid` is replaced by `AnimationController` + `Animator`,
+  preventing the visual rig from re-enabling character collisions.
+- The original character is hidden locally while a replica is active.
+
+The comparison mode called **Pixelado experimental** uses a low-resolution
+`SurfaceGui` containing a `ViewportFrame`. It demonstrates the platform limit:
+the result is softened by Roblox's 3D renderer and is explicitly labelled
+`NO ES PIXEL ART REAL`.
+
+## Studio hierarchy
+
+```text
+ReplicatedStorage
+└── PixelAvatar
+    ├── PixelAvatarConfig
+    ├── PixelAvatarUtils
+    ├── ThumbnailPixelator
+    ├── ProceduralImageFinalizer
+    ├── ProceduralRaster
+    ├── ProceduralChibiBody
+    ├── HairColorAnalyzer
+    ├── ProceduralChibiFace
+    ├── ProceduralChibiSelfTest
+    └── ProceduralChibiRenderer
+
+StarterPlayer
+└── StarterPlayerScripts
+    └── PixelAvatarController
+```
+
+The old Sprite Forge atlas client/server are disabled by the installer, not
+deleted. The Roblox-only prototype does not contact ComfyUI, a local web server,
+an external API or a generative model.
+
+## Install or update
+
+Keep the target place open in Roblox Studio with the MCP plugin connected, then
+run:
+
+```powershell
+node scripts/install-roblox-only-pixel-avatar.js
+```
+
+The installer replaces only the `ReplicatedStorage.PixelAvatar` package and
+`StarterPlayerScripts.PixelAvatarController`.
+
+## Comparison panel
+
+The panel in the lower-left corner provides:
+
+- `Original`
+- `Thumbnail pixel real`
+- `Chibi procedural`
+- `Pixelado experimental`
+- `Estilizado retro 3D`
+- outline on/off
+- 32×32, 48×48, 64×64, 80×80 and 96×96 raster/experimental resolutions
+- 8, 12, 15 and 30 Hz visual update rates
+- current technique
+- approximate display FPS
+- visual replica part count
+- average update time
+- a compatibility warning
+
+## Central configuration
+
+Edit `ReplicatedStorage.PixelAvatar.PixelAvatarConfig` in Studio or
+`studio-prototype/PixelAvatarConfig.lua` in the repository:
+
+```lua
+PixelResolution = Vector2.new(96, 96)
+PaletteLevels = 6
+OutlineEnabled = true
+OutlineThickness = 1
+UpdateRate = 15
+RenderDistance = 100
+UsePixelatedSampling = true
+ThumbnailChannelLevels = 4
+ThumbnailPaletteSize = 24
+ThumbnailHeadPaletteSize = 18
+ThumbnailBodyPaletteSize = 24
+ThumbnailAccentPreservation = 0.28
+ThumbnailAlphaThreshold = 28
+ThumbnailOutlineRadius = 1
+ThumbnailCropPadding = 0.025
+ThumbnailHeadRatio = 0.43
+ThumbnailCleanIsolatedPixels = true
+ProceduralChibiSize = Vector2.new(128, 256)
+ProceduralChibiEyeColor = Color3.fromRGB(116, 88, 168)
+ProceduralChibiPaletteSize = 48
+ProceduralChibiAlphaThreshold = 48
+ProceduralChibiHeadHeightRatio = 0.41
+ProceduralChibiDebugStage = "Final"
+```
+
+`ThumbnailPaletteSize` controls the avatar-specific palette. The older
+`ThumbnailChannelLevels` remains as a fallback for callers that omit the
+palette size. Head and body palette sizes can be tuned independently.
+`ThumbnailHeadRatio` controls the automatic regional split, while
+`ThumbnailCropPadding` leaves breathing room around the detected silhouette.
+The preview uses the largest integer display scale that fits, preventing uneven
+pixel widths at 80×80 and 96×96. `ThumbnailOutlineRadius` controls the actual
+raster outline. `OutlineThickness`
+is retained as a design setting, but Roblox `Highlight` does
+not expose a thickness property. The supported controls are outline color and
+transparency. `UsePixelatedSampling` cannot affect a `ViewportFrame`; nearest
+neighbor sampling only applies when an actual image exists.
+
+Lower `PaletteLevels` for stronger color stepping on untextured body parts.
+Textured accessories and layered clothing retain their original textures so the
+player stays recognizable. Lower `UpdateRate` for a more visibly stepped
+animation and lower client work. Lower `RenderDistance` to cull remote replicas
+sooner.
+
+## Lifecycle and performance
+
+- Each visible player gets one retro replica and one reusable experimental
+  replica; they are not cloned per frame.
+- Pose/animation work is throttled by `UpdateRate`.
+- The controller supports all currently visible players and watches new players.
+- Respawn destroys the previous session and creates exactly one replacement.
+- Player removal disconnects per-player connections and destroys both replicas.
+- Parts are non-collidable, non-queryable, non-touchable, massless and
+  client-only.
+- The original avatar is restored whenever the selected replica is unavailable
+  or beyond `RenderDistance`.
+
+## Verified Roblox APIs
+
+The implementation was checked against the official Engine API reference:
+
+- `ViewportFrame` renders 3D content and has no capture/read method.
+- `WorldModel` supports animated humanoid joints inside a `ViewportFrame`.
+- `Players:GetHumanoidDescriptionFromUserIdAsync()` returns the equipped public
+  avatar description.
+- `Players:CreateHumanoidModelFromDescriptionAsync()` creates the matching
+  visual rig.
+- `ImageLabel.ResampleMode = Enum.ResamplerMode.Pixelated` is nearest-neighbor
+  sampling for the generated thumbnail image.
+- `Players:GetUserThumbnailAsync()` supplies the public 420×420 avatar render.
+- `AssetService:CreateEditableImageAsync(Content.fromUri(...))` can load the
+  non-asset thumbnail URI.
+- `EditableImage:ReadPixelsBuffer()` and `WritePixelsBuffer()` operate on an
+  `EditableImage`, not a rendered viewport.
+- `Highlight` supports configurable outline color/transparency but not outline
+  thickness.
+- `SurfaceGui.CanvasSize` supplies the fixed comparison canvas and
+  `MaxDistance` supplies a render limit.
+
+## Required Studio security setting
+
+The experience must enable **Game Settings > Security > Allow Mesh / Image
+APIs**. If it is disabled, the thumbnail mode preserves the original character
+and shows a specific warning instead of crashing. Published experiences also
+need to satisfy Roblox's access requirements for `EditableImage`.
+
+## Remaining animated path
+
+Within current Roblox runtime capabilities, real-time pixel-perfect
+rasterization of an arbitrary animated avatar is not available. The thumbnail
+mode proves the visual language first; a true animated sprite result would
+still require one of these approaches:
+pre-rendered/uploaded images, an offline generation pipeline, or a manually
+authored sprite system. The retro 3D mode remains the animated, fully in-Roblox
+comparison fallback.
