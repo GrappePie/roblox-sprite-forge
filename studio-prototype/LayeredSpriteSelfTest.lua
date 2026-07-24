@@ -4,6 +4,7 @@ local AppearanceFingerprint = require(script.Parent:WaitForChild("AppearanceFing
 local LayeredSpriteRenderer = require(script.Parent:WaitForChild("LayeredSpriteRenderer"))
 local LayeredSpriteRuntime = require(script.Parent:WaitForChild("LayeredSpriteRuntime"))
 local MockStylizationProvider = require(script.Parent:WaitForChild("MockStylizationProvider"))
+local GoldenArtworkProvider = require(script.Parent:WaitForChild("GoldenArtworkProvider"))
 local SpritePackage = require(script.Parent:WaitForChild("SpritePackage"))
 local SpritePackageCache = require(script.Parent:WaitForChild("SpritePackageCache"))
 
@@ -45,6 +46,27 @@ function LayeredSpriteSelfTest.Run()
 	local fingerprintB = AppearanceFingerprint.FromSnapshot(snapshotB)
 	assertEqual(fingerprintA, fingerprintA2, "Fingerprint must ignore table key order")
 	assert(fingerprintA ~= fingerprintB, "Appearance changes must invalidate the fingerprint")
+	local authoredEntry = { assetIds = { 100, 200, 300 } }
+	local compatible, compatibleRatio = GoldenArtworkProvider.IsAppearanceCompatible(authoredEntry, {
+		Shirt = 100,
+		Pants = 200,
+		accessories = { { assetId = 300 } },
+	})
+	assert(compatible and compatibleRatio == 1, "Matching appearance must reuse Golden Artwork")
+	local incompatible, incompatibleRatio = GoldenArtworkProvider.IsAppearanceCompatible(authoredEntry, {
+		Shirt = 999,
+		Pants = 998,
+		accessories = { { assetId = 997 } },
+	})
+	assert(
+		not incompatible and incompatibleRatio == 0,
+		"Changed appearance must not reuse Golden Artwork by userId"
+	)
+	local removedAsset = GoldenArtworkProvider.IsAppearanceCompatible(authoredEntry, {
+		Shirt = 100,
+		Pants = 200,
+	})
+	assert(not removedAsset, "Removed accessories must invalidate Golden Artwork")
 
 	local package = MockStylizationProvider.BuildPackage(fingerprintA)
 	local validation = SpritePackage.Validate(package, fingerprintA)

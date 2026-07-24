@@ -24,6 +24,7 @@ test("imports exact RGBA master and creates a <=48-color derived artwork", async
     resultsRoot: fixture.resultsRoot,
   });
   assert.equal(result.validationReport.valid, true);
+  assert.deepEqual(result.packageManifest.appearance.assetIds, [111, 222]);
   assert.deepEqual(result.validationReport.dimensions, MASTER_SIZE);
   assert.ok(result.validationReport.transparentPercent > 0);
   assert.ok(result.validationReport.margins.left >= 2);
@@ -126,6 +127,12 @@ async function createFixture(t, options = {}) {
     schemaVersion: GOLDEN_SCHEMA_VERSION,
     styleVersion: GOLDEN_STYLE_VERSION,
     userId: 123,
+    assetIds: [222, 111, 222],
+    assets: [
+      { id: 222, type: "ShirtAccessory" },
+      { id: 111, type: "HairAccessory" },
+      { id: 333, type: "WalkAnimation" },
+    ],
     appearanceFingerprint: FINGERPRINT,
     requiredArtwork: { master: MASTER_SIZE },
   }));

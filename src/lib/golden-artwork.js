@@ -174,6 +174,9 @@ export async function importGoldenArtwork({
     id: `golden-${fingerprint}`,
     fingerprint,
     userId: request.userId,
+    appearance: {
+      assetIds: appearanceAssetIds(request),
+    },
     layerName: "CharacterFlat",
     storage: "rgba8",
     anchor: [0.5, 1],
@@ -233,6 +236,22 @@ export async function importGoldenArtwork({
     ),
   ]);
   return { outputDirectory, packageManifest, validationReport };
+}
+
+function normalizeAssetIds(values) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map(Number)
+    .filter((value) => Number.isSafeInteger(value) && value > 0))]
+    .sort((left, right) => left - right);
+}
+
+function appearanceAssetIds(request) {
+  if (!Array.isArray(request.assets)) {
+    return normalizeAssetIds(request.assetIds);
+  }
+  return normalizeAssetIds(request.assets
+    .filter((asset) => asset && !/Animation$/i.test(String(asset.type ?? "")))
+    .map((asset) => asset.id));
 }
 
 export function analyzeRgba(rgba, width, height, alphaThreshold = 8) {

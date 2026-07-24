@@ -374,6 +374,7 @@ async function loadGoldenResources() {
     entrySources.push(
       `[${luaString(directory.name)}] = { fingerprint = ${luaString(directory.name)}, ` +
       `userId = ${Number(manifest.userId)}, styleVersion = ${luaString(manifest.styleVersion)}, ` +
+      `assetIds = { ${normalizeAssetIds(manifest.appearance?.assetIds).join(", ")} }, ` +
       `variants = { ${variantSources.join(", ")} } }`,
     );
   }
@@ -389,4 +390,11 @@ async function loadGoldenResources() {
 
 function luaString(value) {
   return JSON.stringify(String(value));
+}
+
+function normalizeAssetIds(values) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map(Number)
+    .filter((value) => Number.isSafeInteger(value) && value > 0))]
+    .sort((left, right) => left - right);
 }

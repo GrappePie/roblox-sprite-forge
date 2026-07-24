@@ -69,16 +69,94 @@ local function loadRgba(dataFolder: Instance, variant: any): buffer
 	return result
 end
 
-local function findEntry(registry: any, request: any): any?
-	local exact = registry.entries[request.fingerprint]
-	if exact then return exact end
-	local userId = request.appearance and request.appearance.userId
-	if userId then
-		for _, entry in registry.entries do
-			if entry.userId == userId then return entry end
+local IDENTITY_PROPERTIES = {
+	"BackAccessory",
+	"Face",
+	"FaceAccessory",
+	"FrontAccessory",
+	"GraphicTShirt",
+	"HairAccessory",
+	"HatAccessory",
+	"Head",
+	"LeftArm",
+	"LeftLeg",
+	"NeckAccessory",
+	"Pants",
+	"RightArm",
+	"RightLeg",
+	"Shirt",
+	"ShouldersAccessory",
+	"Torso",
+	"WaistAccessory",
+}
+
+local function addAssetId(ids: { [number]: boolean }, value: any)
+	if type(value) == "number" then
+		local rounded = math.floor(value)
+		if rounded > 0 then ids[rounded] = true end
+	elseif type(value) == "string" then
+		for match in string.gmatch(value, "%d+") do
+			local id = tonumber(match)
+			if id and id > 0 then ids[id] = true end
 		end
 	end
-	return nil
+end
+
+local function collectAppearanceAssetIds(appearance: any): ({ [number]: boolean }, number)
+	local ids: { [number]: boolean } = {}
+	if type(appearance) ~= "table" then return ids, 0 end
+	for _, propertyName in IDENTITY_PROPERTIES do
+		addAssetId(ids, appearance[propertyName])
+	end
+	if type(appearance.accessories) == "table" then
+		for _, accessory in appearance.accessories do
+			if type(accessory) == "table" then
+				addAssetId(ids, accessory.assetId)
+			end
+		end
+	end
+	local count = 0
+	for _ in ids do count += 1 end
+	return ids, count
+end
+
+function GoldenArtworkProvider.IsAppearanceCompatible(entry: any, appearance: any): (boolean, number)
+	local expected: { [number]: boolean } = {}
+	for _, assetId in entry.assetIds or {} do
+		addAssetId(expected, assetId)
+	end
+	local expectedCount = 0
+	for _ in expected do expectedCount += 1 end
+	local current, currentCount = collectAppearanceAssetIds(appearance)
+	if currentCount == 0 or expectedCount == 0 then return false, 0 end
+	local matched = 0
+	for assetId in current do
+		if expected[assetId] then matched += 1 end
+	end
+	local ratio = matched / math.max(currentCount, expectedCount)
+	return matched == currentCount and matched == expectedCount, ratio
+end
+
+local function findEntry(registry: any, request: any): (any?, string?)
+	local exact = registry.entries[request.fingerprint]
+	if exact then return exact, nil end
+	local userId = request.appearance and request.appearance.userId
+	local foundUserEntry = false
+	if userId then
+		for _, entry in registry.entries do
+			if entry.userId == userId then
+				foundUserEntry = true
+				local compatible = GoldenArtworkProvider.IsAppearanceCompatible(
+					entry,
+					request.appearance
+				)
+				if compatible then return entry, nil end
+			end
+		end
+	end
+	return nil, if foundUserEntry
+		then "MissingGoldenArtworkAppearanceMismatch:" .. request.fingerprint
+		else "MissingGoldenArtwork:" .. request.fingerprint
 end
 
 function GoldenArtworkProvider.new(
@@ -100,10 +178,10 @@ end
 
 function GoldenArtworkProvider.Request(self: Provider, request: any)
 	self.requests += 1
-	local entry = findEntry(self.registry, request)
+	local entry, missingReason = findEntry(self.registry, request)
 	if not entry then
 		self.misses += 1
-		return nil, "MissingGoldenArtwork:" .. request.fingerprint
+		return nil, missingReason
 	end
 	local variant = entry.variants[self.variant]
 	if not variant then

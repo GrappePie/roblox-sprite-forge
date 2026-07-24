@@ -109,7 +109,7 @@ The panel exposes:
 
 - Original avatar;
 - Procedural fallback;
-- Mock package;
+- Mock estático;
 - Golden artwork;
 - Golden artwork 128×256;
 - Golden artwork 256×512.
@@ -120,3 +120,13 @@ replaces it only after the imported package validates and its renderer is
 already visible. Cache entries are keyed by the live Roblox appearance
 fingerprint; an imported result may be selected by its user ID, then is rebound
 to that live fingerprint without changing any RGBA pixel.
+
+Sharing a Roblox `userId` is not enough to reuse an imported illustration.
+User-ID fallback additionally compares the current HumanoidDescription clothing,
+body-part and accessory asset IDs against the imported request. A changed avatar
+therefore enters `MissingGoldenArtworkAppearanceMismatch` instead of displaying
+stale artwork. Animation assets are excluded because they do not change the
+visible outfit. `CharacterAppearanceLoaded` also invalidates the local thumbnail
+so the procedural fallback is regenerated for the new public appearance. The
+mock remains intentionally static and only its technical package fingerprint
+changes.

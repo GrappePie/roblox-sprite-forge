@@ -119,7 +119,7 @@ local MODE_LABELS: { [Mode]: string } = {
 	Original = "Original",
 	Thumbnail = "Thumbnail pixel real",
 	ProceduralChibi = "Chibi procedural",
-	MockPackage = "Mock package",
+	MockPackage = "Mock estático",
 	GoldenArtwork = "Golden artwork",
 	GoldenDerived = "Golden 128x256",
 	GoldenMaster = "Golden 256x512",
@@ -453,7 +453,7 @@ local function refreshStatus()
 		local metrics = if layeredRuntime then layeredRuntime:Metrics() else nil
 		local provider = packageProvider(mode)
 		statusTechnique.Text = if mode == "MockPackage"
-			then "Técnica: mock técnico de infraestructura; no es arte"
+			then "Técnica: mock estático; sólo prueba infraestructura y no sigue el avatar"
 			else "Técnica: Golden Artwork RGBA plano, sin rig ni animación"
 		statusWarning.Text = string.format(
 			"Estado: %s | requests=%d | caché=%d/%d | stale=%d | transición=%d",
@@ -1134,8 +1134,11 @@ local function watchPlayer(player: Player)
 		task.defer(createSession, player, character)
 		if player == localPlayer then
 			task.delay(0.4, function()
-				if isPackageMode(mode) and localPlayer.Character == character then
-					startLayeredRuntime(true)
+				if localPlayer.Character == character then
+					regenerateThumbnail()
+					if isPackageMode(mode) then
+						startLayeredRuntime(true)
+					end
 				end
 			end)
 		end
@@ -1152,8 +1155,14 @@ local function watchPlayer(player: Player)
 		end
 		if player == localPlayer then
 			task.delay(0.2, function()
-				if isPackageMode(mode) and localPlayer.Character == character then
-					startLayeredRuntime(true)
+				if localPlayer.Character == character then
+					-- The rendered thumbnail is appearance data, not character-session
+					-- data. Invalidate it explicitly so a respawn after an avatar
+					-- change cannot keep showing the previous player's outfit.
+					regenerateThumbnail()
+					if isPackageMode(mode) then
+						startLayeredRuntime(true)
+					end
 				end
 			end)
 		end
