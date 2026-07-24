@@ -62,6 +62,10 @@ end
 local function rasterizeLayer(package: Package, layer: SpritePackage.Layer): EditableImage
 	local size = package.canvasSize
 	local image = AssetService:CreateEditableImage({ Size = size })
+	if package.flatArtwork and layer.name == "CharacterFlat" then
+		image:WritePixelsBuffer(Vector2.zero, size, package.flatArtwork.rgba)
+		return image
+	end
 	local pixels = buffer.create(math.floor(size.X) * math.floor(size.Y) * 4)
 	for _, rect in layer.rects do
 		writeRect(pixels, size, rect, package.palette[rect.colorIndex])
@@ -146,7 +150,7 @@ function LayeredSpriteRenderer.new(parent: Instance, package: Package, options: 
 		basePivots = {},
 		scale = scale,
 		viewportSize = viewportSize,
-		clipName = "Idle",
+		clipName = if package.flatArtwork then "Static" else "Idle",
 		clipTime = 0,
 		connection = nil,
 		destroyed = false,
@@ -164,22 +168,30 @@ function LayeredSpriteRenderer.new(parent: Instance, package: Package, options: 
 		label.BorderSizePixel = 0
 		label.ResampleMode = Enum.ResamplerMode.Pixelated
 		label.ScaleType = Enum.ScaleType.Stretch
-		label.AnchorPoint = Vector2.new(
-			layer.pivot.X / package.canvasSize.X,
-			layer.pivot.Y / package.canvasSize.Y
-		)
-		label.Position = UDim2.fromOffset(layer.anchor.X * scale, layer.anchor.Y * scale)
+		label.AnchorPoint = if package.flatArtwork
+			then layer.pivot
+			else Vector2.new(
+				layer.pivot.X / package.canvasSize.X,
+				layer.pivot.Y / package.canvasSize.Y
+			)
+		label.Position = if package.flatArtwork
+			then UDim2.fromScale(layer.anchor.X, layer.anchor.Y)
+			else UDim2.fromOffset(layer.anchor.X * scale, layer.anchor.Y * scale)
 		label.Size = UDim2.fromOffset(displaySize.X, displaySize.Y)
-		label.ZIndex = layer.zIndex
+		-- Package zIndex is relative to the sprite. GUI ZIndex 0 would render
+		-- behind the preview panel itself, so reserve 0 for the host background.
+		label.ZIndex = layer.zIndex + 1
 		label.ImageContent = Content.fromObject(image)
 		label.Parent = root
 		renderer.labels[layer.name] = label
 		renderer.baseAnchors[layer.name] = layer.anchor
 		renderer.basePivots[layer.name] = layer.pivot
 	end
-	renderer:SetAnimation("Idle")
-	renderer:Step(0)
-	if resolved.AutoPlay ~= false then
+	if not package.flatArtwork then
+		renderer:SetAnimation("Idle")
+		renderer:Step(0)
+	end
+	if not package.flatArtwork and resolved.AutoPlay ~= false then
 		renderer.connection = RunService.RenderStepped:Connect(function(deltaTime)
 			renderer:Step(deltaTime)
 		end)
@@ -204,6 +216,7 @@ end
 function LayeredSpriteRenderer.Step(self: Renderer, deltaTime: number)
 	if self.destroyed then return end
 	self.steps += 1
+	if self.package.flatArtwork then return end
 	self.clipTime += math.max(0, deltaTime)
 	local clip = self.package.clips[self.clipName]
 	local rootOffset, transforms = LayeredSpriteRenderer.SampleClip(clip, self.clipTime)

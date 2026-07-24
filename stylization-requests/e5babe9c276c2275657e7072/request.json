@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "styleVersion": "golden-chibi-v1",
+  "userId": 1021056267,
+  "username": "YukiManju",
+  "appearanceFingerprint": "e5babe9c276c2275657e7072",
+  "avatarType": "R15",
+  "assetIds": [
+    14284213648,
+    14618207727,
+    15552943109,
+    18322958774,
+    18755938274,
+    74056522836252,
+    83478432217689,
+    83937116921114,
+    87524173645995,
+    93411101402308,
+    94636832418477,
+    95151144476909,
+    102499993651764,
+    104741822987331,
+    107895705891639,
+    121333893378473,
+    122385233020644,
+    126354114956642,
+    130373407996664,
+    132133317685629,
+    134694966028444,
+    134924061585704,
+    135405640496196
+  ],
+  "assets": [
+    {
+      "id": 14284213648,
+      "name": "belly",
+      "type": "TShirt"
+    },
+    {
+      "id": 14618207727,
+      "name": "Default Mood",
+      "type": "MoodAnimation"
+    },
+    {
+      "id": 15552943109,
+      "name": "Rainbow Star Crop Top",
+      "type": "ShirtAccessory"
+    },
+    {
+      "id": 18322958774,
+      "name": "Black slippers",
+      "type": "Pants"
+    },
+    {
+      "id": 18755938274,
+      "name": "No Boundaries by Walmart - Swim",
+      "type": "SwimAnimation"
+    },
+    {
+      "id": 74056522836252,
+      "name": "Billie Eilish walk",
+      "type": "WalkAnimation"
+    },
+    {
+      "id": 83478432217689,
+      "name": "[Animated] Cute Blush Cheeks Face … - Dynamic Head",
+      "type": "DynamicHead"
+    },
+    {
+      "id": 83937116921114,
+      "name": "Popular - Fall",
+      "type": "FallAnimation"
+    },
+    {
+      "id": 87524173645995,
+      "name": "Yvonne Shoes Black - Right Shoe Accessory",
+      "type": "RightShoeAccessory"
+    },
+    {
+      "id": 93411101402308,
+      "name": "Mari - Right Arm",
+      "type": "RightArm"
+    },
+    {
+      "id": 94636832418477,
+      "name": "Mari - Left Leg",
+      "type": "LeftLeg"
+    },
+    {
+      "id": 95151144476909,
+      "name": "Rainbow Bolero Rainbow",
+      "type": "JacketAccessory"
+    },
+    {
+      "id": 102499993651764,
+      "name": "Yvonne Shoes Black - Left Shoe Accessory",
+      "type": "LeftShoeAccessory"
+    },
+    {
+      "id": 104741822987331,
+      "name": "Catwalk Glam - Climb",
+      "type": "ClimbAnimation"
+    },
+    {
+      "id": 107895705891639,
+      "name": "Billie Eilish run",
+      "type": "RunAnimation"
+    },
+    {
+      "id": 121333893378473,
+      "name": "Kitty cat Headphones synthwave alien decora cute",
+      "type": "Hat"
+    },
+    {
+      "id": 122385233020644,
+      "name": "Mari - Left Arm",
+      "type": "LeftArm"
+    },
+    {
+      "id": 126354114956642,
+      "name": "adidas Community Animation Pack",
+      "type": "IdleAnimation"
+    },
+    {
+      "id": 130373407996664,
+      "name": "Popular - Jump",
+      "type": "JumpAnimation"
+    },
+    {
+      "id": 132133317685629,
+      "name": "Alien space green short bob decora stars halloween",
+      "type": "HairAccessory"
+    },
+    {
+      "id": 134694966028444,
+      "name": "Mari - Right Leg",
+      "type": "RightLeg"
+    },
+    {
+      "id": 134924061585704,
+      "name": "Mari - Torso",
+      "type": "Torso"
+    },
+    {
+      "id": 135405640496196,
+      "name": "Mini Ruffle Skirt Alien",
+      "type": "DressSkirtAccessory"
+    }
+  ],
+  "bodyColors": {
+    "headColorId": 125,
+    "torsoColorId": 125,
+    "rightArmColorId": 125,
+    "leftArmColorId": 125,
+    "rightLegColorId": 125,
+    "leftLegColorId": 125
+  },
+  "scales": {
+    "height": 0.9,
+    "width": 0.7,
+    "head": 0.95,
+    "depth": 0.85,
+    "proportion": 0,
+    "bodyType": 0
+  },
+  "requiredArtwork": {
+    "master": {
+      "width": 256,
+      "height": 512,
+      "format": "png",
+      "alpha": true,
+      "maxColors": 128
+    },
+    "derived": {
+      "width": 128,
+      "height": 256,
+      "format": "png",
+      "alpha": true,
+      "maxColors": 48
+    }
+  },
+  "expectedResults": [
+    "canonical.png"
+  ]
+}

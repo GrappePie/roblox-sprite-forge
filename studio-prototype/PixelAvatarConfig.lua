@@ -34,6 +34,8 @@ return table.freeze({
 	ProceduralChibiRunSelfTest = true,
 	LayeredSpriteCanvasSize = Vector2.new(64, 96),
 	LayeredMockDelaySeconds = 8.5,
+	GoldenArtworkMasterSize = Vector2.new(256, 512),
+	GoldenArtworkDerivedSize = Vector2.new(128, 256),
 	ProceduralChibiDebugStages = table.freeze({
 		"SourceBody",
 		"SourceRegions",
@@ -135,7 +137,7 @@ return table.freeze({
 		"Final",
 	}),
 
-	DefaultMode = "Layered",
+	DefaultMode = "GoldenArtwork",
 	Resolutions = table.freeze({
 		Vector2.new(32, 32),
 		Vector2.new(48, 48),

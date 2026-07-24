@@ -35,6 +35,12 @@ mode remains a **retro 3D visual replica**:
 
 ## Hybrid layered SpritePackage milestone
 
+The current art-direction checkpoint is documented in
+[`GOLDEN_ARTWORK_PROOF.md`](./GOLDEN_ARTWORK_PROOF.md). It introduces a real,
+externally authored 256×512 RGBA `CharacterFlat` package before any rigging.
+The mock provider remains infrastructure-only and is no longer the default
+visual mode.
+
 The final direction is now a hybrid runtime. `ProceduralChibi` is frozen as an
 experimental `ProceduralFallbackRenderer`: it is useful for immediate local
 feedback, palette extraction, thumbnails and failure handling, but a

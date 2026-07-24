@@ -13,6 +13,7 @@ export type State =
 	| "Loading"
 	| "Validating"
 	| "Ready"
+	| "MissingGoldenArtwork"
 	| "Failed"
 	| "Stale"
 
@@ -153,7 +154,7 @@ function LayeredSpriteRuntime.ActivatePackage(
 	end
 	self:CleanupRenderer()
 	self.renderer = rendererOrError
-	if type(self.renderer.SetAnimation) == "function" then
+	if type(self.renderer.SetAnimation) == "function" and package.clips.Idle then
 		self.renderer:SetAnimation("Idle")
 	end
 	if type(self.renderer.SetVisible) == "function" then
@@ -183,7 +184,7 @@ function LayeredSpriteRuntime.Start(self: Runtime, appearance: { [string]: any }
 	self:ShowFallback(fingerprint)
 	self:SetState("Loading")
 	task.spawn(function()
-		local ok, packageOrError = pcall(function()
+		local ok, packageOrError, providerDetail = pcall(function()
 			return self.provider:Request({
 				fingerprint = fingerprint,
 				appearance = appearance,
@@ -197,6 +198,10 @@ function LayeredSpriteRuntime.Start(self: Runtime, appearance: { [string]: any }
 		if not ok then
 			self.failures += 1
 			self:SetState("Failed", tostring(packageOrError))
+			return
+		end
+		if packageOrError == nil then
+			self:SetState("MissingGoldenArtwork", tostring(providerDetail or fingerprint))
 			return
 		end
 		self:ActivatePackage(packageOrError, fingerprint, false, generation)

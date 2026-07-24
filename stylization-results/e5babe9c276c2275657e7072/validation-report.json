@@ -1,0 +1,55 @@
+{
+  "valid": true,
+  "schemaVersion": 1,
+  "styleVersion": "golden-chibi-v1",
+  "fingerprint": "e5babe9c276c2275657e7072",
+  "userId": 1021056267,
+  "dimensions": {
+    "width": 256,
+    "height": 512
+  },
+  "colorCount": 34740,
+  "boundingBox": {
+    "minX": 25,
+    "minY": 45,
+    "maxX": 230,
+    "maxY": 468,
+    "width": 206,
+    "height": 424
+  },
+  "transparentPercent": 0.6217117309570312,
+  "partialAlphaPercent": 0.0527191162109375,
+  "margins": {
+    "left": 25,
+    "top": 45,
+    "right": 25,
+    "bottom": 43
+  },
+  "contentHash": "6bcc1637e29a6c7e751e955be631b61c3d0d26b9ebd6d4b66fb3fd8d0073a9f8",
+  "rgbaHash": "004c809b0db9a52f39a86feadd9e9febd2a1650e62000dfde20148bff9ee3cd6",
+  "derived": {
+    "dimensions": {
+      "width": 128,
+      "height": 256
+    },
+    "colorCount": 16,
+    "boundingBox": {
+      "minX": 12,
+      "minY": 22,
+      "maxX": 115,
+      "maxY": 234,
+      "width": 104,
+      "height": 213
+    },
+    "transparentPercent": 0.60333251953125,
+    "margins": {
+      "left": 12,
+      "top": 22,
+      "right": 12,
+      "bottom": 21
+    }
+  },
+  "warnings": [
+    "Master uses 34740 RGB colors; retained losslessly as direct RGBA."
+  ]
+}

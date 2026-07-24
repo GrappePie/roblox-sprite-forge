@@ -16,9 +16,19 @@ local LayeredSpriteRenderer = require(packageFolder:WaitForChild("LayeredSpriteR
 local LayeredSpriteRuntime = require(packageFolder:WaitForChild("LayeredSpriteRuntime"))
 local LayeredSpriteSelfTest = require(packageFolder:WaitForChild("LayeredSpriteSelfTest"))
 local MockStylizationProvider = require(packageFolder:WaitForChild("MockStylizationProvider"))
+local GoldenArtworkProvider = require(packageFolder:WaitForChild("GoldenArtworkProvider"))
+local GoldenArtworkRegistry = require(packageFolder:WaitForChild("GoldenArtworkRegistry"))
 local SpritePackageCache = require(packageFolder:WaitForChild("SpritePackageCache"))
 
-type Mode = "Original" | "Thumbnail" | "ProceduralChibi" | "Layered" | "Experimental" | "Retro3D"
+type Mode = "Original"
+	| "Thumbnail"
+	| "ProceduralChibi"
+	| "MockPackage"
+	| "GoldenArtwork"
+	| "GoldenDerived"
+	| "GoldenMaster"
+	| "Experimental"
+	| "Retro3D"
 type Session = {
 	player: Player,
 	character: Model,
@@ -87,19 +97,51 @@ local THUMBNAIL_PREVIEW_MAX = 512
 local previewTitle: TextLabel
 local proceduralDebugStage = Config.ProceduralChibiDebugStage
 local layeredState = "Idle"
-local layeredCache = SpritePackageCache.new()
-local layeredProvider = MockStylizationProvider.new(Config.LayeredMockDelaySeconds)
+local mockProvider = MockStylizationProvider.new(Config.LayeredMockDelaySeconds)
+local goldenProviderMaster = GoldenArtworkProvider.new(
+	GoldenArtworkRegistry,
+	packageFolder:WaitForChild("GoldenArtworkData"),
+	"master"
+)
+local goldenProviderDerived = GoldenArtworkProvider.new(
+	GoldenArtworkRegistry,
+	packageFolder:WaitForChild("GoldenArtworkData"),
+	"derived"
+)
+local mockCache = SpritePackageCache.new()
+local goldenMasterCache = SpritePackageCache.new()
+local goldenDerivedCache = SpritePackageCache.new()
 local layeredRuntime: any? = nil
 local layeredActiveCharacter: Model? = nil
+local layeredProviderKey: string? = nil
 
 local MODE_LABELS: { [Mode]: string } = {
 	Original = "Original",
 	Thumbnail = "Thumbnail pixel real",
 	ProceduralChibi = "Chibi procedural",
-	Layered = "Sprite por capas",
+	MockPackage = "Mock package",
+	GoldenArtwork = "Golden artwork",
+	GoldenDerived = "Golden 128x256",
+	GoldenMaster = "Golden 256x512",
 	Experimental = "Pixelado experimental",
 	Retro3D = "Estilizado retro 3D",
 }
+
+local function isPackageMode(candidate: Mode): boolean
+	return candidate == "MockPackage"
+		or candidate == "GoldenArtwork"
+		or candidate == "GoldenDerived"
+		or candidate == "GoldenMaster"
+end
+
+local function packageProvider(candidate: Mode): (any, any, string)
+	if candidate == "MockPackage" then
+		return mockProvider, mockCache, "MockPackage"
+	elseif candidate == "GoldenDerived" then
+		return goldenProviderDerived, goldenDerivedCache, "GoldenDerived"
+	end
+	return goldenProviderMaster, goldenMasterCache, "GoldenMaster"
+end
 
 local function rounded(gui: GuiObject, radius: number)
 	local corner = Instance.new("UICorner")
@@ -192,19 +234,22 @@ local function createPanel()
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = content
 
-	local title = makeLabel(content, "PIXEL AVATAR / ROBLOX-ONLY COMPARISON", 22)
+	local title = makeLabel(content, "GOLDEN ARTWORK / FLAT PROOF", 22)
 	title.LayoutOrder = 1
 	title.TextColor3 = Color3.fromRGB(229, 250, 255)
 	title.TextSize = 15
 
 	local modeRow = makeRow(content, 32)
 	modeRow.LayoutOrder = 2
-	for _, candidate: Mode in { "Original", "Thumbnail", "ProceduralChibi", "Layered" } do
+	for _, candidate: Mode in { "Original", "ProceduralChibi", "MockPackage" } do
 		local widths: { [Mode]: number } = {
 			Original = 76,
 			Thumbnail = 132,
 			ProceduralChibi = 138,
-			Layered = 142,
+			MockPackage = 122,
+			GoldenArtwork = 142,
+			GoldenDerived = 142,
+			GoldenMaster = 142,
 			Experimental = 170,
 			Retro3D = 145,
 		}
@@ -214,8 +259,8 @@ local function createPanel()
 
 	local modeRowSecondary = makeRow(content, 32)
 	modeRowSecondary.LayoutOrder = 3
-	for _, candidate: Mode in { "Experimental", "Retro3D" } do
-		local width = if candidate == "Experimental" then 170 else 145
+	for _, candidate: Mode in { "GoldenArtwork", "GoldenDerived", "GoldenMaster" } do
+		local width = 175
 		local button = makeButton(modeRowSecondary, MODE_LABELS[candidate], width)
 		modeButtons[candidate] = button
 	end
@@ -404,13 +449,16 @@ local function refreshStatus()
 			statusWarning.Text =
 				"Fallback inmediato dentro de Roblox; no pretende reinterpretación ilustrada arbitraria."
 		end
-	elseif mode == "Layered" then
+	elseif isPackageMode(mode) then
 		local metrics = if layeredRuntime then layeredRuntime:Metrics() else nil
-		statusTechnique.Text = "Técnica: SpritePackage por capas + rig 2D determinista"
+		local provider = packageProvider(mode)
+		statusTechnique.Text = if mode == "MockPackage"
+			then "Técnica: mock técnico de infraestructura; no es arte"
+			else "Técnica: Golden Artwork RGBA plano, sin rig ni animación"
 		statusWarning.Text = string.format(
-			"Estado: %s | provider mock=%d | caché=%d/%d | stale=%d | transición=%d",
+			"Estado: %s | requests=%d | caché=%d/%d | stale=%d | transición=%d",
 			layeredState,
-			layeredProvider.requests,
+			provider.requests,
 			if metrics then metrics.cacheHits else 0,
 			if metrics then metrics.cacheMisses else 0,
 			if metrics then metrics.staleResponses else 0,
@@ -467,7 +515,7 @@ local function regenerateThumbnail()
 				HeadRatio = Config.ThumbnailHeadRatio,
 				CleanIsolatedPixels = Config.ThumbnailCleanIsolatedPixels,
 			}
-		local requestedMode: Mode = if displayMode == "Layered" then "ProceduralChibi" else displayMode
+		local requestedMode: Mode = if isPackageMode(displayMode) then "ProceduralChibi" else displayMode
 		local ok, result, renderMetrics = pcall(function()
 			if requestedMode == "ProceduralChibi" then
 				local skinColor = Color3.fromRGB(234, 190, 171)
@@ -720,7 +768,7 @@ local function updateResolution()
 	for _, session in sessions do
 		session.surfaceGui.CanvasSize = resolution
 	end
-	local imageSize = if mode == "ProceduralChibi" or mode == "Layered"
+	local imageSize = if mode == "ProceduralChibi" or isPackageMode(mode)
 		then Config.ProceduralChibiSize
 		else resolution
 	local displayScale = math.max(
@@ -742,10 +790,16 @@ local function updateResolution()
 end
 
 local function ensureLayeredRuntime()
-	if layeredRuntime then return end
+	local provider, cache, providerKey = packageProvider(mode)
+	if layeredRuntime and layeredProviderKey == providerKey then return end
+	if layeredRuntime then
+		layeredRuntime:Destroy()
+		layeredRuntime = nil
+	end
+	layeredProviderKey = providerKey
 	layeredRuntime = LayeredSpriteRuntime.new({
-		provider = layeredProvider,
-		cache = layeredCache,
+		provider = provider,
+		cache = cache,
 		showFallback = function(fingerprint: string)
 			thumbnailLabel.Visible = true
 			layeredHost.Visible = true
@@ -782,7 +836,7 @@ end
 local function startLayeredRuntime(isRespawn: boolean?)
 	local character = localPlayer.Character
 	if not character then return end
-	if mode == "Layered" then
+	if isPackageMode(mode) then
 		thumbnailFrame.Visible = true
 		layeredHost.Visible = true
 	end
@@ -798,11 +852,15 @@ local function startLayeredRuntime(isRespawn: boolean?)
 	end
 	local snapshot = AppearanceFingerprint.Capture(descriptionOrError :: HumanoidDescription)
 	local fingerprint = AppearanceFingerprint.FromSnapshot(snapshot)
+	snapshot.userId = localPlayer.UserId
 	ensureLayeredRuntime()
 	if not isRespawn
 		and layeredActiveCharacter == character
 		and layeredRuntime:GetFingerprint() == fingerprint
-		and table.find({ "Fallback", "Loading", "Validating", "Ready" }, layeredRuntime:GetState()) then
+		and table.find(
+			{ "Fallback", "Loading", "Validating", "Ready", "MissingGoldenArtwork" },
+			layeredRuntime:GetState()
+		) then
 		return
 	end
 	layeredActiveCharacter = character
@@ -831,17 +889,17 @@ local function applyMode()
 	for _, session in sessions do
 		setSessionVisibility(session)
 	end
-	local isImageMode = mode == "Thumbnail" or mode == "ProceduralChibi" or mode == "Layered"
+	local isImageMode = mode == "Thumbnail" or mode == "ProceduralChibi" or isPackageMode(mode)
 	thumbnailFrame.Visible = isImageMode
 	previewTitle.Text = if mode == "ProceduralChibi"
 		then "PROCEDURAL FALLBACK / LUAU"
-		elseif mode == "Layered" then "SPRITE PACKAGE / CAPAS + RIG"
+		elseif isPackageMode(mode) then "GOLDEN ARTWORK / FLAT PROOF"
 		else "AVATAR THUMBNAIL → PÍXELES REALES"
 	updateResolution()
-	if mode == "Layered" then
+	if isPackageMode(mode) then
 		layeredHost.Visible = true
 		thumbnailLabel.Visible = layeredState ~= "Ready"
-		if thumbnailRenderedMode ~= "Layered" and not thumbnailLoading then
+		if thumbnailRenderedMode ~= mode and not thumbnailLoading then
 			regenerateThumbnail()
 		end
 		startLayeredRuntime(false)
@@ -1076,7 +1134,7 @@ local function watchPlayer(player: Player)
 		task.defer(createSession, player, character)
 		if player == localPlayer then
 			task.delay(0.4, function()
-				if mode == "Layered" and localPlayer.Character == character then
+				if isPackageMode(mode) and localPlayer.Character == character then
 					startLayeredRuntime(true)
 				end
 			end)
@@ -1094,7 +1152,7 @@ local function watchPlayer(player: Player)
 		end
 		if player == localPlayer then
 			task.delay(0.2, function()
-				if mode == "Layered" and localPlayer.Character == character then
+				if isPackageMode(mode) and localPlayer.Character == character then
 					startLayeredRuntime(true)
 				end
 			end)
@@ -1200,7 +1258,7 @@ for candidate, button in modeButtons do
 end
 table.insert(globalConnections, outlineButton.Activated:Connect(function()
 	outlineEnabled = not outlineEnabled
-	if mode == "Thumbnail" or mode == "ProceduralChibi" or mode == "Layered" then
+	if mode == "Thumbnail" or mode == "ProceduralChibi" or isPackageMode(mode) then
 		regenerateThumbnail()
 	end
 	applyMode()
@@ -1231,7 +1289,7 @@ for index, button in resolutionButtons do
 	table.insert(globalConnections, button.Activated:Connect(function()
 		resolution = Config.Resolutions[index]
 		updateResolution()
-		if mode == "Thumbnail" or mode == "ProceduralChibi" or mode == "Layered" then
+		if mode == "Thumbnail" or mode == "ProceduralChibi" or isPackageMode(mode) then
 			regenerateThumbnail()
 		end
 		refreshButtonStyles()

@@ -19,6 +19,16 @@ export type Layer = {
 	rects: { Rect },
 }
 
+export type FlatArtwork = {
+	width: number,
+	height: number,
+	rgba: buffer,
+	anchor: Vector2,
+	pivot: Vector2,
+	variant: string,
+	contentHash: string?,
+}
+
 export type Transform = {
 	position: Vector2?,
 	rotation: number?,
@@ -55,6 +65,7 @@ export type Package = {
 	anchors: { [string]: Vector2 },
 	rig: { Joint },
 	clips: { [string]: Clip },
+	flatArtwork: FlatArtwork?,
 }
 
 export type ValidationResult = {
@@ -109,7 +120,11 @@ function SpritePackage.Validate(value: any, expectedFingerprint: string?): Valid
 		addError(errors, value.canvasSize.X > 0 and value.canvasSize.Y > 0, "canvasSize must be positive")
 		addError(errors, value.canvasSize.X <= 512 and value.canvasSize.Y <= 512, "canvasSize exceeds 512")
 	end
-	addError(errors, type(value.palette) == "table" and #value.palette > 0, "palette is required")
+	local isFlat = type(value.flatArtwork) == "table"
+	addError(errors, type(value.palette) == "table", "palette is required")
+	if not isFlat then
+		addError(errors, type(value.palette) == "table" and #value.palette > 0, "palette is required")
+	end
 	addError(errors, type(value.palette) == "table" and #value.palette <= 96, "palette exceeds 96 colors")
 	if type(value.palette) == "table" then
 		for index, color in value.palette do
@@ -139,7 +154,11 @@ function SpritePackage.Validate(value: any, expectedFingerprint: string?): Valid
 			end
 			addError(errors, typeof(layer.pivot) == "Vector2", "layer pivot must be Vector2")
 			addError(errors, typeof(layer.anchor) == "Vector2", "layer anchor must be Vector2")
-			addError(errors, type(layer.rects) == "table" and #layer.rects > 0, "layer rects are required")
+			addError(
+				errors,
+				type(layer.rects) == "table" and (isFlat or #layer.rects > 0),
+				"layer rects are required"
+			)
 			if type(layer.rects) == "table" and typeof(value.canvasSize) == "Vector2" then
 				for rectIndex, rect in layer.rects do
 					if type(rect) ~= "table" then
@@ -164,17 +183,47 @@ function SpritePackage.Validate(value: any, expectedFingerprint: string?): Valid
 			end
 		end
 	end
-	for _, required in REQUIRED_LAYERS do
-		addError(errors, layerNames[required] == true, "missing required layer " .. required)
+	if isFlat then
+		addError(errors, layerNames.CharacterFlat == true, "flat package needs CharacterFlat")
+		addError(errors, #(value.layers or {}) == 1, "flat package must contain one layer")
+		local artwork = value.flatArtwork
+		addError(errors, type(artwork.width) == "number" and artwork.width > 0, "flat width is required")
+		addError(errors, type(artwork.height) == "number" and artwork.height > 0, "flat height is required")
+		addError(errors, typeof(artwork.rgba) == "buffer", "flat rgba buffer is required")
+		addError(errors, typeof(artwork.anchor) == "Vector2", "flat anchor must be Vector2")
+		addError(errors, typeof(artwork.pivot) == "Vector2", "flat pivot must be Vector2")
+		addError(errors, type(artwork.variant) == "string", "flat variant is required")
+		if typeof(value.canvasSize) == "Vector2"
+			and type(artwork.width) == "number"
+			and type(artwork.height) == "number" then
+			addError(
+				errors,
+				artwork.width == value.canvasSize.X and artwork.height == value.canvasSize.Y,
+				"flat artwork dimensions must match canvasSize"
+			)
+		end
+		if typeof(artwork.rgba) == "buffer"
+			and type(artwork.width) == "number"
+			and type(artwork.height) == "number" then
+			addError(
+				errors,
+				buffer.len(artwork.rgba) == artwork.width * artwork.height * 4,
+				"flat rgba length does not match dimensions"
+			)
+		end
+	else
+		for _, required in REQUIRED_LAYERS do
+			addError(errors, layerNames[required] == true, "missing required layer " .. required)
+		end
 	end
 
 	addError(errors, type(value.anchors) == "table", "anchors are required")
-	if type(value.anchors) == "table" then
+	if not isFlat and type(value.anchors) == "table" then
 		for _, anchorName in { "Root", "Head", "LeftHand", "RightHand", "LeftFoot", "RightFoot" } do
 			addError(errors, typeof(value.anchors[anchorName]) == "Vector2", "missing anchor " .. anchorName)
 		end
 	end
-	addError(errors, type(value.rig) == "table" and #value.rig > 0, "rig is required")
+	addError(errors, type(value.rig) == "table" and (isFlat or #value.rig > 0), "rig is required")
 	if type(value.rig) == "table" then
 		local joints: { [string]: boolean } = {}
 		for _, joint in value.rig do
@@ -185,7 +234,7 @@ function SpritePackage.Validate(value: any, expectedFingerprint: string?): Valid
 		end
 	end
 	addError(errors, type(value.clips) == "table", "clips are required")
-	for _, clipName in { "Idle", "Walk", "Jump" } do
+	for _, clipName in if isFlat then {} else { "Idle", "Walk", "Jump" } do
 		local clip = if type(value.clips) == "table" then value.clips[clipName] else nil
 		addError(errors, type(clip) == "table", "missing clip " .. clipName)
 		if type(clip) == "table" then

@@ -9,7 +9,7 @@ export type Request = {
 }
 
 export type Provider = {
-	kind: "Mock" | "Http" | "Offline" | "ManualLibrary",
+	kind: "Mock" | "GoldenArtwork" | "Http" | "Offline" | "ManualLibrary",
 	Request: (self: Provider, request: Request) -> any,
 }
 

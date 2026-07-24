@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "styleVersion": "golden-chibi-v1",
+  "id": "golden-e5babe9c276c2275657e7072",
+  "fingerprint": "e5babe9c276c2275657e7072",
+  "userId": 1021056267,
+  "layerName": "CharacterFlat",
+  "storage": "rgba8",
+  "anchor": [
+    0.5,
+    1
+  ],
+  "pivot": [
+    0.5,
+    1
+  ],
+  "packageHash": "ca7a4241bed3b24bc6cafe3fc6ed297cbe4f72c3a2e986bc2ee0febfc8998878",
+  "variants": {
+    "master": {
+      "width": 256,
+      "height": 512,
+      "colors": 34740,
+      "rgbaHash": "004c809b0db9a52f39a86feadd9e9febd2a1650e62000dfde20148bff9ee3cd6"
+    },
+    "derived": {
+      "width": 128,
+      "height": 256,
+      "colors": 16,
+      "rgbaHash": "7df67fa35795bd8c152f07c9b204bd00c965fc286c75e671619136d149da340b"
+    }
+  }
+}

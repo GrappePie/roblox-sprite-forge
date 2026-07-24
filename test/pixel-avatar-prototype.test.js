@@ -80,6 +80,10 @@ const mockProvider = fs.readFileSync(
   "studio-prototype/MockStylizationProvider.lua",
   "utf8",
 );
+const goldenProvider = fs.readFileSync(
+  "studio-prototype/GoldenArtworkProvider.lua",
+  "utf8",
+);
 const layeredRenderer = fs.readFileSync(
   "studio-prototype/LayeredSpriteRenderer.lua",
   "utf8",
@@ -152,11 +156,12 @@ test("visual clone is non-physical and strips active content", () => {
 test("comparison controller exposes all requested modes and controls", () => {
   for (const text of [
     "Original",
-    "Thumbnail pixel real",
     "Chibi procedural",
-    "Sprite por capas",
-    "Pixelado experimental",
-    "Estilizado retro 3D",
+    "Mock package",
+    "Golden artwork",
+    "Golden 128x256",
+    "Golden 256x512",
+    "GOLDEN ARTWORK / FLAT PROOF",
     "Contorno",
     "FPS aprox",
     "partes réplica",
@@ -334,7 +339,7 @@ test("procedural chibi renderer redraws a Roblox avatar entirely in Luau", () =>
 });
 
 test("layered sprite runtime defines the hybrid package milestone", () => {
-  assert.match(config, /DefaultMode = "Layered"/);
+  assert.match(config, /DefaultMode = "GoldenArtwork"/);
   assert.match(appearanceFingerprint, /FromSnapshot/);
   assert.match(appearanceFingerprint, /GetAccessories\(true\)/);
   assert.match(spritePackage, /schemaVersion must be 1/);
@@ -351,6 +356,12 @@ test("layered sprite runtime defines the hybrid package milestone", () => {
   assert.match(spriteCache, /function SpritePackageCache\.Put/);
   assert.match(mockProvider, /kind = "Mock"/);
   assert.match(mockProvider, /BuildPackage/);
+  assert.match(goldenProvider, /kind = "GoldenArtwork"/);
+  assert.match(goldenProvider, /CharacterFlat/);
+  assert.match(goldenProvider, /loadRgba/);
+  assert.doesNotMatch(goldenProvider, /FillRect|rect\(/);
+  assert.match(spritePackage, /flatArtwork/);
+  assert.match(spritePackage, /flat rgba buffer is required/);
   assert.match(layeredRenderer, /Enum\.ResamplerMode\.Pixelated/);
   assert.match(layeredRenderer, /CalculateIntegerScale/);
   assert.match(layeredRenderer, /SampleClip/);
@@ -362,6 +373,7 @@ test("layered sprite runtime defines the hybrid package milestone", () => {
   assert.match(layeredRuntime, /"Loading"/);
   assert.match(layeredRuntime, /"Validating"/);
   assert.match(layeredRuntime, /"Ready"/);
+  assert.match(layeredRuntime, /"MissingGoldenArtwork"/);
   assert.match(layeredRuntime, /"Failed"/);
   assert.match(layeredRuntime, /"Stale"/);
   assert.match(layeredRuntime, /staleResponses/);
@@ -371,12 +383,19 @@ test("layered sprite runtime defines the hybrid package milestone", () => {
   assert.match(controller, /layeredHost\.Visible = true/);
   assert.match(controller, /thumbnailLabel\.Visible = layeredRuntime:GetState\(\) ~= "Ready"/);
   assert.match(controller, /\[LayeredSpriteSelfTest\] PASS/);
+  assert.match(controller, /GoldenArtworkProvider/);
+  assert.match(controller, /Mock package/);
+  assert.match(controller, /Golden artwork/);
 });
 
 test("layered Luau self-test covers runtime behavior instead of source-only invariants", () => {
   assert.match(layeredSelfTest, /Fingerprint must ignore table key order/);
   assert.match(layeredSelfTest, /Appearance changes must invalidate the fingerprint/);
   assert.match(layeredSelfTest, /Invalid schema must be rejected/);
+  assert.match(layeredSelfTest, /Flat SpritePackage must validate/);
+  assert.match(layeredSelfTest, /Flat renderer must create one EditableImage/);
+  assert.match(layeredSelfTest, /Missing golden artwork must be a distinct state/);
+  assert.match(layeredSelfTest, /Flat artwork respawn must reuse cache/);
   assert.match(layeredSelfTest, /Layer order must follow zIndex/);
   assert.match(layeredSelfTest, /First cache lookup must miss/);
   assert.match(layeredSelfTest, /Second cache lookup must hit/);

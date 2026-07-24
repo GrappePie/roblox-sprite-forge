@@ -56,6 +56,48 @@ function LayeredSpriteSelfTest.Run()
 	local invalid = SpritePackage.Validate(invalidPackage, fingerprintA)
 	assert(not invalid.valid, "Invalid schema must be rejected")
 
+	local flatPixels = buffer.create(16 * 32 * 4)
+	for y = 4, 27 do
+		for x = 3, 12 do
+			local offset = (y * 16 + x) * 4
+			buffer.writeu8(flatPixels, offset, 72 + x * 4)
+			buffer.writeu8(flatPixels, offset + 1, 210 - y * 2)
+			buffer.writeu8(flatPixels, offset + 2, 164)
+			buffer.writeu8(flatPixels, offset + 3, 255)
+		end
+	end
+	local flatPackage = {
+		schemaVersion = 1,
+		id = "golden-flat-test",
+		fingerprint = fingerprintA,
+		canvasSize = Vector2.new(16, 32),
+		palette = {},
+		layers = {
+			{
+				name = "CharacterFlat",
+				zIndex = 0,
+				anchor = Vector2.new(0.5, 1),
+				pivot = Vector2.new(0.5, 1),
+				rects = {},
+			},
+		},
+		anchors = {},
+		rig = {},
+		clips = {},
+		flatArtwork = {
+			width = 16,
+			height = 32,
+			rgba = flatPixels,
+			anchor = Vector2.new(0.5, 1),
+			pivot = Vector2.new(0.5, 1),
+			variant = "master",
+			contentHash = "synthetic",
+		},
+	}
+	local flatValidation = SpritePackage.Validate(flatPackage, fingerprintA)
+	assert(flatValidation.valid, "Flat SpritePackage must validate: " .. table.concat(flatValidation.errors, "; "))
+	assertEqual(flatValidation.layerOrder[1], "CharacterFlat", "Flat package must keep CharacterFlat")
+
 	local cache = SpritePackageCache.new()
 	assertEqual(cache:Get(fingerprintA), nil, "First cache lookup must miss")
 	cache:Put(fingerprintA, package)
@@ -92,6 +134,22 @@ function LayeredSpriteSelfTest.Run()
 	assert(renderer:Metrics().destroyed, "Renderer cleanup must mark itself destroyed")
 	assertEqual(rendererParent:FindFirstChild("LayeredSprite"), nil, "Renderer cleanup must destroy its GUI")
 	rendererParent:Destroy()
+
+	local flatParent = Instance.new("Frame")
+	local flatRenderer = LayeredSpriteRenderer.new(flatParent, flatPackage, {
+		ViewportSize = Vector2.new(64, 128),
+		AutoPlay = true,
+		Visible = false,
+	})
+	assertEqual(flatRenderer:Metrics().layers, 1, "Flat renderer must create one layer")
+	assertEqual(flatRenderer:Metrics().imagesCreated, 1, "Flat renderer must create one EditableImage")
+	assertEqual(flatRenderer:Metrics().integerScale, 4, "Flat renderer must use integer scaling")
+	assertEqual(flatRenderer:Metrics().clip, "Static", "Flat artwork must not start a rig clip")
+	for _ = 1, 10 do flatRenderer:Step(0.05) end
+	assertEqual(flatRenderer:Metrics().imagesCreated, 1, "Flat Step must not recreate EditableImage")
+	flatRenderer:Destroy()
+	assertEqual(flatParent:FindFirstChild("LayeredSprite"), nil, "Flat cleanup must destroy its GUI")
+	flatParent:Destroy()
 
 	local events = {}
 	local provider = {
@@ -163,6 +221,60 @@ function LayeredSpriteSelfTest.Run()
 	assert(failedRuntime:Metrics().fallbackVisible, "Fallback must remain visible after provider failure")
 	failedRuntime:Destroy()
 
+	local missingHideCalls = 0
+	local missingRuntime = LayeredSpriteRuntime.new({
+		provider = {
+			kind = "GoldenArtwork",
+			Request = function(_: any, request: any)
+				return nil, "MissingGoldenArtwork:" .. request.fingerprint
+			end,
+		},
+		cache = SpritePackageCache.new(),
+		showFallback = function() end,
+		hideFallback = function() missingHideCalls += 1 end,
+		createRenderer = function() error("Missing artwork must not create renderer") end,
+	})
+	missingRuntime:Start(snapshotA, fingerprintA)
+	task.wait()
+	assertEqual(
+		missingRuntime:GetState(),
+		"MissingGoldenArtwork",
+		"Missing golden artwork must be a distinct state"
+	)
+	assert(missingRuntime:Metrics().fallbackVisible, "Missing golden artwork must keep fallback visible")
+	assertEqual(missingHideCalls, 0, "Missing artwork must not hide fallback")
+	missingRuntime:Destroy()
+
+	local flatRequests = 0
+	local flatCache = SpritePackageCache.new()
+	local flatRuntime = LayeredSpriteRuntime.new({
+		provider = {
+			kind = "GoldenArtwork",
+			Request = function(_: any)
+				flatRequests += 1
+				return flatPackage
+			end,
+		},
+		cache = flatCache,
+		showFallback = function() end,
+		hideFallback = function() end,
+		createRenderer = function(createdPackage: any)
+			local fake: any = { package = createdPackage, visible = false, destroyed = false }
+			function fake:SetVisible(visible: boolean) self.visible = visible end
+			function fake:Destroy() self.destroyed = true end
+			return fake
+		end,
+	})
+	flatRuntime:Start(snapshotA, fingerprintA)
+	task.wait()
+	assertEqual(flatRuntime:GetState(), "Ready", "Flat artwork must replace fallback")
+	assert(flatRuntime.renderer.visible, "Flat artwork must be visible before fallback hides")
+	flatRuntime:Respawn(snapshotA, fingerprintA)
+	assertEqual(flatRequests, 1, "Flat artwork respawn must reuse cache")
+	assertEqual(flatRuntime:Metrics().cacheHits, 1, "Flat cache hit must be counted")
+	flatRuntime:Destroy()
+	assert(flatRuntime:Metrics().cleanups >= 2, "Flat EditableImage owners must be cleaned")
+
 	return {
 		fingerprint = fingerprintA,
 		layerCount = #package.layers,
@@ -170,6 +282,7 @@ function LayeredSpriteSelfTest.Run()
 		staleResponses = runtime:Metrics().staleResponses,
 		transitions = runtime:Metrics().transitions,
 		imagesCreated = rendererMetrics.imagesCreated,
+		flatImagesCreated = 1,
 	}
 end
 
