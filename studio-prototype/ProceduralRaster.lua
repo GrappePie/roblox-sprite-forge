@@ -17,6 +17,7 @@ export type Sample = {
 export type ProjectionMetrics = {
 	projectedPixels: number,
 	rejectedSamples: number,
+	rejectedColorSamples: number,
 	nearbySearchSuccesses: number,
 	fallbackPixels: number,
 }
@@ -416,6 +417,7 @@ function ProceduralRaster.ProjectRegionToMask(
 	local metrics: ProjectionMetrics = {
 		projectedPixels = 0,
 		rejectedSamples = 0,
+		rejectedColorSamples = 0,
 		nearbySearchSuccesses = 0,
 		fallbackPixels = 0,
 	}
@@ -488,8 +490,14 @@ function ProceduralRaster.ProjectRegionToMask(
 				sourceX1,
 				sourceY1
 			)
-			if not accepted(sample) then
+			local rejectedByColor = sample.a >= minAlpha
+				and settings.RejectColor ~= nil
+				and settings.RejectColor(sample.r, sample.g, sample.b)
+			if sample.a < minAlpha or rejectedByColor then
 				metrics.rejectedSamples += 1
+				if rejectedByColor then
+					metrics.rejectedColorSamples += 1
+				end
 				local replacement = nearby((sourceX0 + sourceX1) * 0.5, (sourceY0 + sourceY1) * 0.5)
 				if replacement then
 					sample = replacement

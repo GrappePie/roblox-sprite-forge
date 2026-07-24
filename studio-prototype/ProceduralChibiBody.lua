@@ -143,7 +143,7 @@ local function projectRegion(
 	return {
 		projectedPixels = projection.projectedPixels,
 		fallbackPixels = projection.fallbackPixels,
-		rejectedSkinPixels = projection.rejectedSamples,
+		rejectedSkinPixels = projection.rejectedColorSamples,
 		accentComponents = 0,
 	}
 end
